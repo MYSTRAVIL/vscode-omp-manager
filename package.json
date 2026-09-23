@@ -251,7 +251,7 @@
               "panel"
             ],
             "default": "editor",
-            "description": "Where omp sessions open."
+            "markdownDescription": "Where omp sessions open. VS Code starts an `editor` terminal only once its tab is laid out, so it can appear a moment later than a `panel` one, and restored sessions open one after another."
           },
           "omp.terminalIcon": {
             "type": "string",

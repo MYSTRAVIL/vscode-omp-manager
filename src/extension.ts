@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { normPath } from "./config";
-import { SessionIndex } from "./sessions";
+import { SessionIndex, type SessionInfo } from "./sessions";
 import { systemNotify } from "./systemNotify";
 import { type StateChange, TerminalTracker } from "./tracker";
 import { UsageService } from "./usage";
@@ -96,7 +96,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		else void vscode.window.showInformationMessage("No omp session needs input.");
 	};
 
-	const view = new OmpViewProvider(index, tracker, usage, () => void newSession());
+	const view = new OmpViewProvider(index, tracker, usage, (cwd) => void (cwd ? tracker.open({ cwd }) : newSession()));
 
 	context.subscriptions.push(
 		index,
@@ -114,13 +114,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		}),
 		vscode.commands.registerCommand("omp.resumeSession", async () => {
 			const sortByCreated = vscode.workspace.getConfiguration("omp").get<string>("sessions.sortBy") === "created";
-			const picked = await vscode.window.showQuickPick(
-				workspaceSessions(index).map((s) => ({
-					label: s.title,
-					description: new Date(sortByCreated ? s.created : s.modified).toLocaleString(),
-					detail: s.cwd,
-					session: s,
-				})),
+			// The picker opens at once and shows a busy bar until the first scan finishes.
+			const picked = await vscode.window.showQuickPick<vscode.QuickPickItem & { session: SessionInfo }>(
+				index.ensure().then(() =>
+					workspaceSessions(index).map((s) => ({
+						label: s.title,
+						description: new Date(sortByCreated ? s.created : s.modified).toLocaleString(),
+						detail: s.cwd,
+						session: s,
+					})),
+				),
 				{ placeHolder: "Resume an omp session", matchOnDetail: true },
 			);
 			if (picked) await tracker.open({ sessionFile: picked.session.file, cwd: picked.session.cwd });

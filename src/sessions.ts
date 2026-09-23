@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import * as vscode from "vscode";
 import { normPath, sessionsDir } from "./config";
 
@@ -25,6 +26,9 @@ interface CacheEntry {
 const HEAD_BYTES = 16 * 1024;
 const FIRST_PROMPT_RE = /"role":"user","content":\[\{"type":"text","text":"((?:[^"\\]|\\.)*)/;
 const DEBOUNCE_MS = 1000;
+// Files parsed between yields to the event loop during a full scan. Each parse is a stat
+// and a 16KB read, so a chunk stays well under a frame even on a slow disk.
+const SCAN_CHUNK = 25;
 const EMPTY_TITLE = "(empty session)";
 
 function readHead(file: string): string {
@@ -91,10 +95,10 @@ export interface SessionIndexOptions {
  * Index of top-level omp sessions (`<root>/<bucket>/*.jsonl`). Subagent transcripts
  * live in per-session subdirectories and are skipped.
  *
- * The first `list()` scans everything. After that the watcher names each changed
- * file, and only those are re-read. Every running omp appends to its session about
- * once a second, so a full rescan per change would cost time proportional to the
- * whole history on the extension host thread.
+ * `ensure()` scans everything once, in chunks, so hundreds of sessions do not block the
+ * extension host. After that the watcher names each changed file, and only those are
+ * re-read. Every running omp appends to its session about once a second, so a full
+ * rescan per change would cost time proportional to the whole history.
  */
 export class SessionIndex implements vscode.Disposable {
 	private readonly root: string;
@@ -102,7 +106,10 @@ export class SessionIndex implements vscode.Disposable {
 	// Keyed by normPath(file).
 	private readonly cache = new Map<string, CacheEntry>();
 	private sorted: SessionInfo[] | undefined;
-	private scanned = false;
+	/** The first full scan; set once `ensure()` is called. */
+	private scanned: Promise<void> | undefined;
+	// Scans and flushes run one at a time, so a rescan never races the first scan.
+	private queue: Promise<unknown> = Promise.resolve();
 	private readonly pending = new Set<string>();
 	private rescan = false;
 	private watcher: fs.FSWatcher | undefined;
@@ -124,7 +131,7 @@ export class SessionIndex implements vscode.Disposable {
 				this.watcher = undefined;
 			});
 		} catch {
-			// No sessions dir yet; the first list() still scans once it exists.
+			// No sessions dir yet; a later rescan starts the watcher once it exists.
 		}
 	}
 
@@ -139,18 +146,24 @@ export class SessionIndex implements vscode.Disposable {
 			else return;
 		}
 		clearTimeout(this.debounce);
-		this.debounce = setTimeout(() => this.flush(), this.debounceMs);
+		this.debounce = setTimeout(() => void this.run(() => this.flush()), this.debounceMs);
 	}
 
-	private flush(): void {
+	private run<T>(job: () => Promise<T>): Promise<T> {
+		const next = this.queue.then(job);
+		this.queue = next.catch(() => undefined);
+		return next;
+	}
+
+	private async flush(): Promise<void> {
 		const files = [...this.pending];
 		this.pending.clear();
 		const rescan = this.rescan;
 		this.rescan = false;
-		// Nothing has been listed yet, so the first list() will scan anyway.
+		// Nothing has been listed yet, so the first scan reads these anyway.
 		if (!this.scanned) return;
 		let dirty = false;
-		if (rescan) dirty = this.scan();
+		if (rescan) dirty = await this.scan();
 		else for (const file of files) dirty = this.update(file) || dirty;
 		if (!dirty) return;
 		this.sorted = undefined;
@@ -179,11 +192,11 @@ export class SessionIndex implements vscode.Disposable {
 		return !!(info || cached?.info);
 	}
 
-	/** Full scan of every bucket. Returns whether the listing changed. */
-	private scan(): boolean {
-		this.scanned = true;
+	/** Full scan of every bucket, yielding between chunks. Returns whether the listing changed. */
+	private async scan(): Promise<boolean> {
 		const seen = new Set<string>();
 		let dirty = false;
+		let parsed = 0;
 		let buckets: fs.Dirent[];
 		try {
 			buckets = fs.readdirSync(this.root, { withFileTypes: true });
@@ -204,6 +217,7 @@ export class SessionIndex implements vscode.Disposable {
 				const file = path.join(dir, entry.name);
 				seen.add(normPath(file));
 				dirty = this.update(file) || dirty;
+				if (++parsed % SCAN_CHUNK === 0) await setImmediate();
 			}
 		}
 		for (const key of this.cache.keys()) {
@@ -213,9 +227,17 @@ export class SessionIndex implements vscode.Disposable {
 		return dirty;
 	}
 
-	/** Every session, empty ones included, most recently modified first. */
+	/** Resolves once the first full scan is done; starts it on the first call. */
+	ensure(): Promise<void> {
+		this.scanned ??= this.run(async () => {
+			await this.scan();
+			this.sorted = undefined;
+		});
+		return this.scanned;
+	}
+
+	/** Every session scanned so far, empty ones included, most recently modified first. Await `ensure()` first. */
 	list(): SessionInfo[] {
-		if (!this.scanned) this.scan();
 		if (!this.sorted) {
 			this.sorted = [];
 			for (const { info } of this.cache.values()) if (info) this.sorted.push(info);

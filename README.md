@@ -5,7 +5,7 @@ A VS Code sidebar for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`), t
 <img src="media/screenshot.png" alt="The OMP sidebar: usage meters for Claude and Codex, and the session list grouped by Open, Today, and Yesterday" width="340">
 
 - **Usage limits.** Shows the output of `omp usage` per provider, with a countdown and the local reset time. Optional status bar item and a warning when a limit gets close.
-- **Session history.** Lists your omp sessions for the current workspace, or all of them, grouped by date or folder. Click one to resume it in a terminal.
+- **Session history.** Lists your omp sessions for the current workspace, or all of them, grouped by date or folder. Groups collapse, and a folder group's `+` starts a new session there. Click a session to resume it in a terminal.
 - **Live status.** Each open session shows whether it is idle, working, or waiting on your answer. Notifies you, in VS Code or through the OS, when a background session finishes or asks a question.
 - **Restore on startup.** Reopens the omp sessions that were open when VS Code closed, in the same tab order. Can ask first.
 - **Context menu.** Open in editor or panel, copy the session id or file path, reveal the session file, delete a closed session.
@@ -29,6 +29,8 @@ To get status and restore for omp started by hand in a VS Code shell terminal, c
 
 Tab titles come from omp itself. Set `terminal.integrated.tabs.title` to include `${sequence}` to see them; the default shows only `omp`.
 
+The `OMP` output channel logs each launch with timings: terminal created, process started, and omp's first report. Check it when a session is slow to open.
+
 ## Keybindings
 
 | Keys | Command |
@@ -50,7 +52,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 | `omp.extraArgs` | `[]` | Extra arguments for every omp the extension launches, for example `["--model", "sonnet"]`. |
 | `omp.env` | `{}` | Extra environment variables for every omp the extension launches. |
 | `omp.newSessionCwd` | `workspaceRoot` | Where New Session starts: `workspaceRoot`, `activeFileFolder`, or `ask`. |
-| `omp.terminalLocation` | `editor` | Open sessions in the `editor` area or the `panel`. |
+| `omp.terminalLocation` | `editor` | Open sessions in the `editor` area or the `panel`. VS Code starts an editor terminal only once its tab is laid out, so it can appear a moment later than a panel one. |
 | `omp.terminalIcon` | `sparkle` | Codicon id for omp terminal tabs. |
 | `omp.terminalColor` | empty | Theme color id for omp terminal tabs, for example `terminal.ansiMagenta`. |
 | `omp.restoreOnStartup` | `always` | Reopen the sessions that were open when VS Code closed: `always`, `ask`, or `never`. |

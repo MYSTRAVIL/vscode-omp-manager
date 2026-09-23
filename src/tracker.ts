@@ -12,10 +12,12 @@ const STATE_KEY = "omp.openSessions";
 // Window close can surface as a non-shutdown exit before the extension host stops.
 // Removal waits this long so a closing window never forgets its sessions.
 const CLOSE_GRACE_MS = 1500;
-const SPAWN_WAIT_MS = 10_000;
+// Restore waits this long for each terminal's process before opening the next. A focused
+// editor terminal spawns within a few hundred ms; one that does not should not hold up the rest.
+const SPAWN_WAIT_MS = 2000;
 // omp reports its session a second or two after it starts. Silence past this means
 // the hook did not load, and restore cannot follow the terminal.
-const REPORT_TIMEOUT_MS = 20_000;
+const REPORT_TIMEOUT_MS = 10_000;
 // Map files written for omp started by hand in a shell terminal, not by this extension.
 const ADOPTED_PREFIX = "pid-";
 
@@ -47,6 +49,10 @@ interface Tracked {
 	state?: SessionState;
 	/** The hook has written a record for this terminal. */
 	reported: boolean;
+	/** Launched by this window and not reported within REPORT_TIMEOUT_MS. */
+	stalled?: boolean;
+	/** When this window launched the terminal; timings in the log are relative to it. */
+	launchedAt?: number;
 	/** Timestamp when this terminal entered the working state. */
 	workingSince?: number;
 }
@@ -54,6 +60,8 @@ interface Tracked {
 export interface OpenSession {
 	terminal: vscode.Terminal;
 	state?: SessionState;
+	/** Launched and not yet reported by omp, which can take several seconds to boot. */
+	launching: boolean;
 }
 
 export interface StateChange {
@@ -108,6 +116,8 @@ export class TerminalTracker implements vscode.Disposable {
 	private readonly reportTimers = new Set<NodeJS.Timeout>();
 	private readonly disposables: vscode.Disposable[] = [];
 	private watcher: fs.FSWatcher | undefined;
+	/** Launch timings, for diagnosing slow session starts. */
+	private readonly log = vscode.window.createOutputChannel("OMP", { log: true });
 	private restoring = false;
 	private warnedUnreported = false;
 	/**
@@ -166,7 +176,7 @@ export class TerminalTracker implements vscode.Disposable {
 	openSessions(): Map<string, OpenSession> {
 		const out = new Map<string, OpenSession>();
 		for (const t of this.tracked) {
-			if (t.sessionFile) out.set(normPath(t.sessionFile), { terminal: t.terminal, state: t.state });
+			if (t.sessionFile) out.set(normPath(t.sessionFile), { terminal: t.terminal, state: t.state, launching: !t.reported && !t.stalled });
 		}
 		return out;
 	}
@@ -188,6 +198,7 @@ export class TerminalTracker implements vscode.Disposable {
 	}
 
 	private launch(opts: LaunchOptions): vscode.Terminal {
+		const launchedAt = Date.now();
 		const cfg = vscode.workspace.getConfiguration("omp");
 		const key = crypto.randomUUID();
 		const location = opts.location ?? cfg.get<string>("terminalLocation");
@@ -228,10 +239,17 @@ export class TerminalTracker implements vscode.Disposable {
 		});
 		if (inPanel) terminal.show(opts.preserveFocus);
 		const entry = this.track(terminal, key, opts.cwd ?? "", opts.sessionFile);
+		entry.launchedAt = launchedAt;
+		this.log.info(`[${key.slice(0, 8)}] ${opts.sessionFile ? `resume ${opts.sessionFile}` : "new session"} in ${inPanel ? "panel" : "editor"}; terminal created ${this.since(entry)}`);
+		void terminal.processId.then((pid) => this.log.info(`[${key.slice(0, 8)}] process ${pid ?? "(none)"} started ${this.since(entry)}`));
 		this.watchForReport(entry);
 		this.save();
 		this.changed.fire();
 		return terminal;
+	}
+
+	private since(entry: Tracked): string {
+		return entry.launchedAt === undefined ? "" : `+${Date.now() - entry.launchedAt}ms`;
 	}
 
 	// Launches one at a time: VS Code defers spawning a terminal until its editor is
@@ -244,7 +262,8 @@ export class TerminalTracker implements vscode.Disposable {
 				// A session may have been opened by hand while the "ask" prompt waited.
 				if (this.openSessions().has(normPath(s.sessionFile))) continue;
 				const terminal = this.launch({ cwd: s.cwd, sessionFile: s.sessionFile });
-				await Promise.race([terminal.processId, sleep(SPAWN_WAIT_MS)]);
+				const spawned = await Promise.race([terminal.processId.then(() => true), sleep(SPAWN_WAIT_MS).then(() => false)]);
+				if (!spawned) this.log.warn(`No process ${SPAWN_WAIT_MS}ms after restoring ${s.sessionFile}; restoring the next session`);
 			}
 		} finally {
 			this.restoring = false;
@@ -270,12 +289,21 @@ export class TerminalTracker implements vscode.Disposable {
 		const timer = setTimeout(() => {
 			this.reportTimers.delete(timer);
 			const alive = this.tracked.includes(entry) && entry.terminal.exitStatus === undefined;
-			if (!alive || entry.reported || this.warnedUnreported) return;
+			if (!alive || entry.reported) return;
+			entry.stalled = true;
+			this.changed.fire();
+			this.log.warn(`[${entry.key.slice(0, 8)}] omp has not reported ${this.since(entry)}; check that it can load ${this.hookPath} with -e`);
+			if (this.warnedUnreported) return;
 			this.warnedUnreported = true;
-			void vscode.window.showWarningMessage(
-				"omp has not reported its session, so this terminal will not be restored and shows no status. " +
-					`Check that this omp version can load extensions with -e (${this.hookPath}).`,
-			);
+			void vscode.window
+				.showWarningMessage(
+					"omp has not reported its session, so this terminal will not be restored and shows no status. " +
+						`Check that this omp version can load extensions with -e (${this.hookPath}).`,
+					"Show Log",
+				)
+				.then((choice) => {
+					if (choice) this.log.show();
+				});
 		}, REPORT_TIMEOUT_MS);
 		this.reportTimers.add(timer);
 	}
@@ -321,7 +349,9 @@ export class TerminalTracker implements vscode.Disposable {
 			if (terminal) entry = this.track(terminal, key, "");
 		}
 		if (!entry) return;
+		if (!entry.reported && entry.launchedAt !== undefined) this.log.info(`[${key.slice(0, 8)}] omp reported (${rec.state ?? "idle"}) ${this.since(entry)}`);
 		entry.reported = true;
+		entry.stalled = false;
 		const cwd = typeof rec.cwd === "string" ? rec.cwd : entry.cwd;
 		// Hooks older than state reporting write no state; treat those sessions as idle.
 		const state = (rec.state && STATES.includes(rec.state) ? rec.state : "idle") as SessionState;
@@ -390,5 +420,6 @@ export class TerminalTracker implements vscode.Disposable {
 		for (const d of this.disposables) d.dispose();
 		this.changed.dispose();
 		this.stateChanged.dispose();
+		this.log.dispose();
 	}
 }

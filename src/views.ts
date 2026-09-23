@@ -79,13 +79,24 @@ html { scrollbar-color: auto; }
 .dot.idle { background: var(--vscode-testing-iconPassed, #3fb950); }
 .dot.working { background: var(--vscode-progressBar-background, #0078d4); animation: pulse 1.2s ease-in-out infinite; }
 .dot.waiting { background: var(--vscode-editorWarning-foreground, #cca700); }
+/* Resumed, and omp has not reported yet: it can take several seconds to boot and paint. */
+.dot.launching { box-shadow: inset 0 0 0 1px var(--vscode-descriptionForeground); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
-@media (prefers-reduced-motion: reduce) { .dot.working { animation: none; } }
-.group { display: flex; margin: 10px 4px 4px; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .dot.working, .dot.launching { animation: none; } }
+.group { display: flex; align-items: center; margin: 10px 0 4px; }
 .group:first-child { margin-top: 0; }
+.gtoggle { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; padding: 1px 4px 1px 0; border-radius: 3px; text-align: left; white-space: nowrap; }
+.gtoggle:focus-visible, .gnew:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.group.collapsed .chev { transform: rotate(-90deg); }
+.label { display: flex; min-width: 0; }
 /* A long folder path gives way before its last segment, which tells groups apart and ellipsizes only when it alone is too wide. */
-.group span { overflow: hidden; text-overflow: ellipsis; }
-.group span:last-child { flex: none; max-width: 100%; }
+.label span { overflow: hidden; text-overflow: ellipsis; }
+.label span:last-child { flex: none; max-width: 100%; }
+.count { margin-left: auto; padding-left: 8px; font-weight: 400; }
+/* New session in this folder; shown while the header is hovered or the button has focus. */
+.gnew { flex: none; display: flex; padding: 1px; border-radius: 3px; opacity: 0; }
+.group:hover .gnew, .gnew:focus-visible { opacity: 1; }
+.gnew:hover { background: var(--vscode-toolbar-hoverBackground); }
 `;
 
 const CHEVRON_SVG = `<svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.976 10.072l4.357-4.357.62.618L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/></svg>`;
@@ -108,6 +119,7 @@ const BODY = `
 
 const SCRIPT = `
 const vscode = acquireVsCodeApi();
+const CHEVRON = ${JSON.stringify(CHEVRON_SVG)}, PLUS = ${JSON.stringify(PLUS_SVG.replace('width="16" height="16"', 'width="14" height="14"'))};
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function ago(ms) {
 	const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -190,12 +202,24 @@ function group(ms) {
 	if (ms >= start - 6 * day) return "This week";
 	return "Older";
 }
-const STATE_LABEL = { idle: "open, idle", working: "open, working", waiting: "open, needs input" };
-function headHtml(label) {
+const STATE_LABEL = { launching: "open, starting", idle: "open, idle", working: "open, working", waiting: "open, needs input" };
+// Collapsed groups by key; ignored while searching so every match shows.
+state.groups = state.groups || {};
+function headHtml(key, label, count, collapsed, cwd) {
 	if (groupBy === "none") return "";
 	const cut = Math.max(0, label.lastIndexOf("/"), label.lastIndexOf("\\\\"));
-	return '<div class="group" title="' + esc(label) + '"><span>' + esc(label.slice(0, cut)) + '</span><span>' + esc(label.slice(cut)) + '</span></div>';
+	return '<div class="group' + (collapsed ? " collapsed" : "") + '">'
+		+ '<button class="gtoggle" tabindex="-1" data-group="' + esc(key) + '" aria-expanded="' + !collapsed + '" title="' + esc(label) + '">' + CHEVRON
+		+ '<span class="label"><span>' + esc(label.slice(0, cut)) + '</span><span>' + esc(label.slice(cut)) + '</span></span>'
+		+ '<span class="count">' + count + '</span></button>'
+		+ (cwd ? '<button class="gnew" data-cwd="' + esc(cwd) + '" title="New session in ' + esc(label) + '" aria-label="New session in ' + esc(label) + '">' + PLUS + '</button>' : "")
+		+ '</div>';
 }
+function groupHtml(key, label, members, detail, cwd) {
+	const collapsed = !searching && !!state.groups[key];
+	return headHtml(key, label, members.length, collapsed, cwd) + (collapsed ? "" : members.map(s => rowHtml(s, detail(s))).join(""));
+}
+let searching = false;
 function rowHtml(s, detail) {
 	const ctx = { webviewSection: "session", file: s.file, id: s.id, sessionOpen: !!s.state, preventDefaultContextMenuItems: true };
 	return '<button class="item" tabindex="-1" data-file="' + esc(s.file) + '" data-vscode-context="' + esc(JSON.stringify(ctx)) + '"'
@@ -207,6 +231,7 @@ function rowHtml(s, detail) {
 function renderSessions() {
 	if (items === null) { list.innerHTML = '<div class="muted">Loading…</div>'; return; }
 	const needle = q.value.trim().toLowerCase();
+	searching = !!needle;
 	const matched = needle ? items.filter(s => (s.title + " " + s.detail).toLowerCase().includes(needle)) : items;
 	if (!matched.length) { list.innerHTML = '<div class="muted">' + (items.length ? "No matching sessions" : "No sessions yet") + '</div>'; return; }
 	// Open sessions lead; the rest keep their order inside their group. Only matched rows are
@@ -219,30 +244,49 @@ function renderSessions() {
 		if (members) members.push(s);
 		else groups.set(g, [s]);
 	}
-	// Live sessions re-render this list about once a second; keep keyboard focus on the same row.
-	const focused = document.activeElement && document.activeElement.classList.contains("item") ? document.activeElement.dataset.file : null;
-	let html = open.length ? headHtml("Open") + open.map(s => rowHtml(s, s.detail)).join("") : "";
-	// A folder header already names the folder each row's detail would repeat.
-	for (const [label, members] of groups) html += headHtml(label) + members.map(s => rowHtml(s, groupBy === "folder" ? "" : s.detail)).join("");
+	// Live sessions re-render this list about once a second; keep keyboard focus on the same row or header.
+	const active = document.activeElement;
+	const focused = active && active.classList.contains("item") ? "f:" + active.dataset.file : active && active.classList.contains("gtoggle") ? "g:" + active.dataset.group : null;
+	let html = open.length ? groupHtml("open", "Open", open, s => s.detail) : "";
+	// A folder header already names the folder each row's detail would repeat, and can start a session there.
+	for (const [label, members] of groups) {
+		html += groupBy === "folder"
+			? groupHtml("folder:" + label, label, members, () => "", members[0].cwd)
+			: groupHtml(groupBy + ":" + label, label, members, s => s.detail);
+	}
 	list.innerHTML = html;
-	const rows = [...list.querySelectorAll(".item")];
-	const again = focused === null ? undefined : rows.find(r => r.dataset.file === focused);
-	// One row is tabbable (roving tabindex); arrows move between rows.
-	(again || rows[0]).tabIndex = 0;
+	const rows = navRows();
+	const again = focused === null ? undefined : rows.find(r => (r.classList.contains("item") ? "f:" + r.dataset.file : "g:" + r.dataset.group) === focused);
+	// One row is tabbable (roving tabindex); arrows move between rows and group headers.
+	if (rows.length) (again || rows[0]).tabIndex = 0;
 	if (again) again.focus({ preventScroll: true });
 }
+function navRows() { return [...list.querySelectorAll(".item, .gtoggle")]; }
 function focusRow(row) {
-	for (const r of list.querySelectorAll('.item[tabindex="0"]')) r.tabIndex = -1;
+	for (const r of list.querySelectorAll('.item[tabindex="0"], .gtoggle[tabindex="0"]')) r.tabIndex = -1;
 	row.tabIndex = 0;
 	row.focus();
 }
 document.getElementById("new").addEventListener("click", () => vscode.postMessage({ type: "new" }));
 list.addEventListener("click", e => {
+	const add = e.target.closest(".gnew");
+	if (add) { vscode.postMessage({ type: "new", cwd: add.dataset.cwd }); return; }
+	const toggle = e.target.closest(".gtoggle");
+	if (toggle) {
+		// Collapse only applies outside a search.
+		if (searching) return;
+		const key = toggle.dataset.group;
+		if (state.groups[key]) delete state.groups[key];
+		else state.groups[key] = true;
+		vscode.setState(state);
+		renderSessions();
+		return;
+	}
 	const el = e.target.closest(".item");
 	if (el) vscode.postMessage({ type: "open", file: el.dataset.file });
 });
 list.addEventListener("keydown", e => {
-	const rows = [...list.querySelectorAll(".item")];
+	const rows = navRows();
 	const i = rows.indexOf(document.activeElement);
 	if (i < 0) return;
 	let next;
@@ -251,16 +295,21 @@ list.addEventListener("keydown", e => {
 	else if (e.key === "Home") next = rows[0];
 	else if (e.key === "End") next = rows[rows.length - 1];
 	else if (e.key === "Escape") next = q;
+	else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && rows[i].classList.contains("gtoggle")) {
+		// Like a tree: left collapses a header, right expands it.
+		if ((rows[i].getAttribute("aria-expanded") === "true") === (e.key === "ArrowLeft")) rows[i].click();
+		e.preventDefault();
+		return;
+	}
 	else return;
 	e.preventDefault();
 	if (next === q) q.focus();
 	else if (next) focusRow(next);
 });
 q.addEventListener("keydown", e => {
-	const first = list.querySelector(".item");
-	if (!first) return;
-	if (e.key === "ArrowDown") { e.preventDefault(); focusRow(first); }
-	else if (e.key === "Enter") { e.preventDefault(); first.click(); }
+	if (!list.querySelector(".item, .gtoggle")) return;
+	if (e.key === "ArrowDown") { e.preventDefault(); focusRow(navRows()[0]); }
+	else if (e.key === "Enter" && list.querySelector(".item")) { e.preventDefault(); list.querySelector(".item").click(); }
 });
 q.addEventListener("input", renderSessions);
 // Like native lists, the scrollbar thumb shows while the list is hovered or scrolling.
@@ -290,8 +339,10 @@ interface SessionItem {
 	time: number;
 	/** Group label when grouping by folder. */
 	folder?: string;
-	/** Set only for sessions open in a terminal. */
-	state?: SessionState;
+	/** Where the session ran; a folder group's new-session button starts there. */
+	cwd: string;
+	/** Set only for sessions open in a terminal; "launching" until omp first reports. */
+	state?: SessionState | "launching";
 }
 
 /** A workspace root goes by its name; anything else by the path its row shows as detail. */
@@ -327,7 +378,8 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 		private readonly index: SessionIndex,
 		private readonly tracker: TerminalTracker,
 		private readonly usage: UsageService,
-		private readonly onNew: () => void,
+		/** `cwd`: set when started from a folder group's header. */
+		private readonly onNew: (cwd?: string) => void,
 	) {
 		this.subs.push(
 			usage.onDidChange(() => this.postUsage()),
@@ -353,7 +405,7 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			if (m?.type === "ready") {
 				this.postUsage();
 				this.refreshSessions(true);
-			} else if (m?.type === "new") this.onNew();
+			} else if (m?.type === "new") this.onNew(typeof m.cwd === "string" ? m.cwd : undefined);
 			else if (m?.type === "open" && typeof m.file === "string") this.open(m.file);
 		});
 		view.onDidChangeVisibility(() => {
@@ -396,6 +448,12 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			return;
 		}
 		this.sessionsDirty = false;
+		// The first call waits for the initial scan, which yields to the extension host as it goes.
+		void this.index.ensure().then(() => this.postSessions());
+	}
+
+	private postSessions(): void {
+		if (!this.view) return;
 		const config = vscode.workspace.getConfiguration("omp");
 		const max = Math.max(1, config.get<number>("sessions.maxShown", 300));
 		const groupBy = config.get<string>("sessions.groupBy", "date");
@@ -410,9 +468,8 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			// Sessions from a subfolder (worktrees, scratch dirs) show where they ran.
 			const folder = folders.find((f) => isWithin(s.cwd, f.uri.fsPath));
 			const rel = folder ? path.relative(folder.uri.fsPath, s.cwd) : s.cwd;
-			// The hook reports state shortly after launch; until then an open session shows as idle.
-			const state = live ? (live.state ?? "idle") : undefined;
-			const item: SessionItem = { file: s.file, id: s.id, title: s.title, detail: rel, time: s[sortBy], state };
+			const state = live ? (live.launching ? "launching" : (live.state ?? "idle")) : undefined;
+			const item: SessionItem = { file: s.file, id: s.id, title: s.title, detail: rel, time: s[sortBy], cwd: s.cwd, state };
 			if (groupBy === "folder") item.folder = folderLabel(folder, rel, folders.length);
 			items.push(item);
 		}

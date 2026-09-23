@@ -81,6 +81,7 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 	const a = writeFile(path.join(bucket, "a.jsonl"), sessionLines({ title: "A" }));
 	const index = new SessionIndex({ root, debounceMs: 50 });
 	try {
+		await index.ensure();
 		assert.deepEqual(
 			index.list().map((s) => s.title),
 			["A"],
@@ -120,11 +121,12 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 	}
 });
 
-test("SessionIndex.find parses a file it has not listed without adding it to the list", () => {
+test("SessionIndex.find parses a file it has not listed without adding it to the list", async () => {
 	const root = path.join(tmp, "find");
 	const listed = writeFile(path.join(root, "bucket", "listed.jsonl"), sessionLines({ title: "Listed" }));
 	const index = new SessionIndex({ root, debounceMs: 50 });
 	try {
+		await index.ensure();
 		assert.equal(index.list().length, 1);
 		const outside = writeFile(path.join(tmp, "elsewhere", "x.jsonl"), sessionLines({ title: "Elsewhere" }));
 		assert.equal(index.find(outside)?.title, "Elsewhere");

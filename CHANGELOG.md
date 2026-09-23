@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Usage meters show pacing: a marker where usage would be at an even pace through the window, and how far under or over that pace you are. Toggle with `omp.usage.showPace`.
+- Session groups collapse: click a header, or use Left and Right on it. Each header shows its session count, and collapse is remembered. A search shows every match regardless.
+- Folder groups have a `+` on hover that starts a session in that folder.
+- A resumed session shows a hollow "starting" dot until omp reports, which can take several seconds on a large session.
+- An `OMP` output channel logs each launch: terminal created, process started, and omp's first report, with timings.
+- Restore waits at most 2s (was 10s) for each terminal's process before opening the next, and the missing-hook warning comes after 10s (was 20s), with a Show Log button.
+- The first session scan no longer blocks the extension host; it reads files in chunks, and the resume picker shows a busy bar until it finishes.
 
 ## 0.1.1
 
