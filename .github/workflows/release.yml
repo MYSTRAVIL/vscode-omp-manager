@@ -1,0 +1,35 @@
+name: Release
+
+# Push a v* tag (`npm version patch|minor|major` then `git push --follow-tags`).
+# Builds the vsix and attaches it to a GitHub Release. Uploading it to the
+# Marketplace stays manual.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check the tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm run compile
+      - run: npm test
+      - run: npm run package
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # This version's CHANGELOG section becomes the release notes.
+          awk -v v="$version" '$0 == "## " v {f=1; next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" "omp-manager-$version.vsix" --title "$GITHUB_REF_NAME" --notes-file notes.md

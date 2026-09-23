@@ -7,3 +7,6 @@ memory/**
 test/**
 out-test/**
 tsconfig.test.json
+.github/**
+media/screenshot.png
+*.vsix

@@ -2,6 +2,8 @@
 
 A VS Code sidebar for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`), the terminal coding agent.
 
+<img src="media/screenshot.png" alt="The OMP sidebar: usage meters for Claude and Codex, and the session list grouped by Open, Today, and Yesterday" width="340">
+
 - **Usage limits.** Shows the output of `omp usage` per provider, with a countdown and the local reset time. Optional status bar item and a warning when a limit gets close.
 - **Session history.** Lists your omp sessions for the current workspace, or all of them, grouped by date or folder. Click one to resume it in a terminal.
 - **Live status.** Each open session shows whether it is idle, working, or waiting on your answer. Notifies you, in VS Code or through the OS, when a background session finishes or asks a question.
@@ -15,14 +17,9 @@ A VS Code sidebar for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`), t
 
 ## Install
 
-No Marketplace release yet. Build the vsix and install it:
+Search for **OMP Session Manager** in the Extensions view, or install it from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=mystravil.omp-manager).
 
-```sh
-npm install
-npm run compile
-npm run package
-code --install-extension omp-manager-0.1.0.vsix
-```
+Each [GitHub release](https://github.com/MYSTRAVIL/vscode-omp-manager/releases) also has the `.vsix`. Install it with `code --install-extension omp-manager-<version>.vsix`.
 
 ## How it works
 
@@ -97,6 +94,13 @@ npm install
 npm run watch   # compile on change; press F5 in VS Code to launch an Extension Development Host
 npm test        # unit tests with a vscode stub
 ```
+
+## Releasing
+
+1. Add a `## <version>` section to `CHANGELOG.md`.
+2. Run `npm version patch` (or `minor`, `major`). It bumps `package.json`, commits, and tags `v<version>`.
+3. Run `git push --follow-tags`. The Release workflow tests, packages, and publishes a GitHub release with the `.vsix` and the changelog section as notes.
+4. Download the `.vsix` from the release. On the [publisher page](https://marketplace.visualstudio.com/manage/publishers/mystravil), open the extension's **...** menu, choose **Update**, and upload it.
 
 ## License
 

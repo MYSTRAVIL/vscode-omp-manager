@@ -24,8 +24,14 @@
     "vscode": "^1.90.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished"
