@@ -4,8 +4,22 @@
   "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
   "version": "0.1.0",
   "publisher": "mystravil",
-  "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MYSTRAVIL/vscode-omp-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MYSTRAVIL/vscode-omp-manager/issues"
+  },
+  "homepage": "https://github.com/MYSTRAVIL/vscode-omp-manager#readme",
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "agent",
+    "terminal",
+    "sessions"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -183,7 +197,7 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "tsc -p tsconfig.test.json && node --test --require ./out-test/test/setup.js \"out-test/test/*.test.js\"",
-    "package": "vsce package --no-dependencies --skip-license --allow-missing-repository"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
