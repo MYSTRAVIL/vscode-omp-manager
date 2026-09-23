@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Sidebar content uses more of the width: 8px from the left edge, and the right edge lines up with the session list's scrollbar lane.
+- The omp hook no longer leaves `.tmp` files behind or drops a status update when Windows blocks a file replace.
+- Usage limit warnings are remembered across windows and restarts, so each limit warns once per reset window.
+
 ## 0.1.0
 
 First release.

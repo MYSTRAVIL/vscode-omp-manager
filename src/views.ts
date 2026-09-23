@@ -10,7 +10,7 @@ import { refreshMinutes, type UsageService, visibleProviders, warnPercent } from
 // between them and cannot size to content; here usage takes its natural height and
 // the session list fills and scrolls in the rest.
 const CSS = `
-:root { color-scheme: light dark; }
+:root { color-scheme: light dark; --inset: 8px; --lane: 10px; }
 html, body { height: 100%; }
 /* VS Code's default webview style pads the body 20px; sections and the list reach the sidebar edges, as in native views. */
 body { margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); }
@@ -28,7 +28,8 @@ section.collapsed .body { display: none; }
 .head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .chev { flex: none; transition: transform .1s; }
 section.collapsed .chev { transform: rotate(-90deg); }
-.body { padding: 0 12px 10px; }
+/* Content ends where the list's scrollbar lane begins, so everything shares one right edge. */
+.body { padding: 0 var(--lane) 10px var(--inset); }
 #sessions .body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding-bottom: 0; }
 section.collapsed#sessions .body { display: none; }
 
@@ -52,12 +53,13 @@ section.collapsed#sessions .body { display: none; }
 .search:focus-within { border-color: var(--vscode-focusBorder); }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--vscode-input-foreground); font: inherit; }
 /* The list reaches the right edge so its scrollbar sits there, as in native lists. The stable
-   gutter keeps rows aligned with the search box whether or not the list scrolls. */
-#list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; margin-right: -12px; padding: 0 2px 12px 0; }
+   gutter is the lane width, so rows end on the same edge as the search box and the meters,
+   whether or not the list scrolls. */
+#list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; margin-right: calc(-1 * var(--lane)); padding-bottom: 12px; }
 /* Native list scrollbars: 10px, square, no arrows or track, thumb shown while the list is hovered
    or scrolling. VS Code's default webview style sets scrollbar-color, which makes Chromium ignore these. */
 html { scrollbar-color: auto; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: var(--lane); height: var(--lane); }
 /* Chromium repaints a scrollbar only when its element's own style changes, so hover and scrolling
    set a variable on the list instead of matching the thumb. */
 ::-webkit-scrollbar-thumb { background-color: var(--thumb, transparent); }
