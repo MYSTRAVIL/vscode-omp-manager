@@ -19,6 +19,7 @@ test("reads used fraction, reset time, and status per limit, grouped by provider
 	);
 	assert.deepEqual(providers, [
 		{
+			id: "anthropic",
 			name: "Claude",
 			limits: [
 				// The provider name prefix is dropped under its own heading.
@@ -26,8 +27,7 @@ test("reads used fraction, reset time, and status per limit, grouped by provider
 				{ label: "Weekly", usedPercent: 75, resetsAt: undefined, status: "ok" },
 			],
 		},
-		// Unknown providers keep their id as the heading.
-		{ name: "some-new-provider", limits: [{ label: "Daily", usedPercent: 10, resetsAt: undefined, status: "ok" }] },
+		{ id: "some-new-provider", name: "some-new-provider", limits: [{ label: "Daily", usedPercent: 10, resetsAt: undefined, status: "ok" }] },
 	]);
 });
 

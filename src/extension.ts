@@ -1,8 +1,11 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { normPath } from "./config";
 import { SessionIndex } from "./sessions";
+import { systemNotify } from "./systemNotify";
 import { type StateChange, TerminalTracker } from "./tracker";
 import { UsageService } from "./usage";
+import { UsageMonitor } from "./usageMonitor";
 import { OmpViewProvider, workspaceSessions } from "./views";
 
 /** What `data-vscode-context` on a session row passes to its context menu commands. */
@@ -21,7 +24,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const tracker = new TerminalTracker(context, context.asAbsolutePath("hook/vscode-session-restore.ts"));
 
 	const newSession = async () => {
+		const config = vscode.workspace.getConfiguration("omp");
+		const mode = config.get<string>("newSessionCwd", "workspaceRoot");
 		const folders = vscode.workspace.workspaceFolders ?? [];
+		if (mode === "ask") {
+			const picked = await vscode.window.showOpenDialog({
+				canSelectFiles: false,
+				canSelectFolders: true,
+				defaultUri: folders[0]?.uri,
+				openLabel: "Start omp here",
+			});
+			if (picked?.[0]) await tracker.open({ cwd: picked[0].fsPath });
+			return;
+		}
+		const doc = vscode.window.activeTextEditor?.document;
+		if (mode === "activeFileFolder" && doc?.uri.scheme === "file") {
+			await tracker.open({ cwd: path.dirname(doc.uri.fsPath) });
+			return;
+		}
 		if (folders.length <= 1) {
 			await tracker.open({ cwd: folders[0]?.uri.fsPath });
 			return;
@@ -38,16 +58,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	// A session that stops working in a terminal you are not looking at gets a notification.
 	// `activeTerminal` outlives focus moving to a file, so a terminal tab must also be showing.
 	// A panel terminal has no tab and counts as not looked at.
-	const notify = ({ sessionFile, terminal, previous, state }: StateChange) => {
+	const notify = ({ sessionFile, terminal, previous, state, workedMs }: StateChange) => {
 		if (previous !== "working" || state === "working") return;
-		if (!vscode.workspace.getConfiguration("omp").get<boolean>("notifyWhenDone", true)) return;
+		const config = vscode.workspace.getConfiguration("omp");
+		if (state === "waiting" ? !config.get<boolean>("notify.onInput", true) : !config.get<boolean>("notify.onFinish", true)) return;
+		// Questions always notify; a quick reply finishing does not.
+		const minMs = Math.max(0, config.get<number>("notify.minWorkSeconds", 10)) * 1000;
+		if (state === "idle" && workedMs !== undefined && workedMs < minMs) return;
+		const focused = vscode.window.state.focused;
 		const terminalTabShown = vscode.window.tabGroups.all.some((g) => g.activeTab?.input instanceof vscode.TabInputTerminal);
-		if (vscode.window.state.focused && vscode.window.activeTerminal === terminal && terminalTabShown) return;
+		if (focused && vscode.window.activeTerminal === terminal && terminalTabShown) return;
+
 		const title = index.find(sessionFile)?.title ?? "omp session";
 		const text = state === "waiting" ? `"${title}" needs input` : `"${title}" finished`;
-		void vscode.window.showInformationMessage(text, "Show").then((choice) => {
-			if (choice) terminal.show();
+		const showInVsCode = () =>
+			void vscode.window.showInformationMessage(text, "Show").then((choice) => {
+				if (choice) terminal.show();
+			});
+		const style = config.get<string>("notify.style", "vscode");
+		// A system notification is for when VS Code is in the background; a focused window gets its own.
+		if (style === "vscode" || focused) {
+			showInVsCode();
+			return;
+		}
+		if (style === "both") showInVsCode();
+		void systemNotify(vscode.env.appName, state === "waiting" ? "omp needs input" : "omp finished", title).then((shown) => {
+			if (!shown && style === "system") showInVsCode();
 		});
+	};
+
+	// Cycles through waiting sessions in tab order, starting after the active terminal.
+	const focusNextWaiting = () => {
+		const open = [...tracker.openSessions().values()];
+		const active = open.findIndex((s) => s.terminal === vscode.window.activeTerminal);
+		const next = open.find((s, i) => i > active && s.state === "waiting") ?? open.find((s) => s.state === "waiting");
+		if (next) next.terminal.show();
+		else void vscode.window.showInformationMessage("No omp session needs input.");
 	};
 
 	const view = new OmpViewProvider(index, tracker, usage, () => void newSession());
@@ -57,7 +103,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		usage,
 		tracker,
 		view,
+		new UsageMonitor(usage),
 		tracker.onDidChangeState(notify),
+		vscode.commands.registerCommand("omp.focusNextWaiting", focusNextWaiting),
 		vscode.window.registerWebviewViewProvider("omp.main", view),
 		vscode.commands.registerCommand("omp.newSession", newSession),
 		vscode.commands.registerCommand("omp.refresh", () => {
@@ -65,10 +113,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			return usage.refresh();
 		}),
 		vscode.commands.registerCommand("omp.resumeSession", async () => {
+			const sortByCreated = vscode.workspace.getConfiguration("omp").get<string>("sessions.sortBy") === "created";
 			const picked = await vscode.window.showQuickPick(
 				workspaceSessions(index).map((s) => ({
 					label: s.title,
-					description: new Date(s.modified).toLocaleString(),
+					description: new Date(sortByCreated ? s.created : s.modified).toLocaleString(),
 					detail: s.cwd,
 					session: s,
 				})),

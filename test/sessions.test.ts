@@ -50,8 +50,11 @@ test("parseSession reads id, cwd, and creation time from the header", () => {
 	assert.equal(info?.modified, 1000);
 });
 
-test("parseSession skips sessions with no prompt and files that are not sessions", () => {
-	assert.equal(parse(sessionLines({})), null);
+test("parseSession flags sessions with no prompt as empty and skips files that are not sessions", () => {
+	const empty = parse(sessionLines({}));
+	assert.equal(empty?.empty, true);
+	assert.ok(empty?.title, "empty sessions still get a title to show");
+	assert.equal(parse(sessionLines({ prompt: "hi" }))?.empty, false);
 	assert.equal(parse('{"type":"something else"}\n'), null);
 	assert.equal(parse(""), null);
 });
@@ -76,7 +79,6 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 	const root = path.join(tmp, "index");
 	const bucket = path.join(root, "-work-proj");
 	const a = writeFile(path.join(bucket, "a.jsonl"), sessionLines({ title: "A" }));
-	writeFile(path.join(bucket, "empty.jsonl"), sessionLines({}));
 	const index = new SessionIndex({ root, debounceMs: 50 });
 	try {
 		assert.deepEqual(

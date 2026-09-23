@@ -4,9 +4,7 @@ import * as vscode from "vscode";
 import { isWithin, normPath } from "./config";
 import type { SessionIndex, SessionInfo } from "./sessions";
 import type { SessionState, TerminalTracker } from "./tracker";
-import type { UsageService } from "./usage";
-
-const MAX_SESSIONS = 300;
+import { refreshMinutes, type UsageService, visibleProviders, warnPercent } from "./usage";
 
 // One webview holds both sections. Separate VS Code views split the sidebar height
 // between them and cannot size to content; here usage takes its natural height and
@@ -14,7 +12,8 @@ const MAX_SESSIONS = 300;
 const CSS = `
 :root { color-scheme: light dark; }
 html, body { height: 100%; }
-body { margin: 0; display: flex; flex-direction: column; overflow: hidden; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); }
+/* VS Code's default webview style pads the body 20px; sections and the list reach the sidebar edges, as in native views. */
+body { margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 .muted { color: var(--vscode-descriptionForeground); }
 .error { color: var(--vscode-errorForeground); margin: 6px 0; }
@@ -33,7 +32,8 @@ section.collapsed .chev { transform: rotate(-90deg); }
 #sessions .body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding-bottom: 0; }
 section.collapsed#sessions .body { display: none; }
 
-.provider { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); margin: 8px 0 8px; }
+.provider, .group { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
+.provider { margin: 8px 0; }
 .limit { margin: 0 0 12px; }
 .limit:last-child { margin-bottom: 2px; }
 .row { display: flex; justify-content: space-between; margin-bottom: 5px; }
@@ -42,6 +42,8 @@ section.collapsed#sessions .body { display: none; }
 .fill.warn { background: var(--vscode-editorWarning-foreground); }
 .fill.full { background: var(--vscode-errorForeground); }
 .reset { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 4px; }
+/* The local time keeps its right-hand place when the countdown is hidden. */
+.reset .at { margin-left: auto; }
 
 .new { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 4px; margin: 4px 0 8px; border-radius: 4px; text-align: left; }
 .new:hover, .item:hover { background: var(--vscode-list-hoverBackground); }
@@ -49,7 +51,19 @@ section.collapsed#sessions .body { display: none; }
 .search { display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin-bottom: 8px; border: 1px solid var(--vscode-input-border, transparent); background: var(--vscode-input-background); border-radius: 4px; }
 .search:focus-within { border-color: var(--vscode-focusBorder); }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--vscode-input-foreground); font: inherit; }
-#list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
+/* The list reaches the right edge so its scrollbar sits there, as in native lists. The stable
+   gutter keeps rows aligned with the search box whether or not the list scrolls. */
+#list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; margin-right: -12px; padding: 0 2px 12px 0; }
+/* Native list scrollbars: 10px, square, no arrows or track, thumb shown while the list is hovered
+   or scrolling. VS Code's default webview style sets scrollbar-color, which makes Chromium ignore these. */
+html { scrollbar-color: auto; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Chromium repaints a scrollbar only when its element's own style changes, so hover and scrolling
+   set a variable on the list instead of matching the thumb. */
+::-webkit-scrollbar-thumb { background-color: var(--thumb, transparent); }
+#list:hover, #list.scrolling { --thumb: var(--vscode-scrollbarSlider-background); }
+#list::-webkit-scrollbar-thumb:hover { background-color: var(--vscode-scrollbarSlider-hoverBackground); }
+#list::-webkit-scrollbar-thumb:active { background-color: var(--vscode-scrollbarSlider-activeBackground); }
 .item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 4px; border-radius: 4px; text-align: left; }
 .item:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
 .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -61,8 +75,11 @@ section.collapsed#sessions .body { display: none; }
 .dot.waiting { background: var(--vscode-editorWarning-foreground, #cca700); }
 @keyframes pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .dot.working { animation: none; } }
-.group { font-size: 11px; margin: 10px 4px 4px; }
+.group { display: flex; margin: 10px 4px 4px; white-space: nowrap; }
 .group:first-child { margin-top: 0; }
+/* A long folder path gives way before its last segment, which tells groups apart and ellipsizes only when it alone is too wide. */
+.group span { overflow: hidden; text-overflow: ellipsis; }
+.group span:last-child { flex: none; max-width: 100%; }
 `;
 
 const CHEVRON_SVG = `<svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.976 10.072l4.357-4.357.62.618L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/></svg>`;
@@ -127,7 +144,7 @@ for (const head of document.querySelectorAll(".head")) {
 applyCollapsed();
 
 const usageBody = document.getElementById("usage-body");
-let usage;
+let usage, warnPercent, resetDisplay;
 function renderUsage() {
 	if (!usage) { usageBody.innerHTML = '<div class="muted">Loading usage…</div>'; return; }
 	let html = usage.error ? '<div class="error">' + esc(usage.error) + '</div>' : "";
@@ -135,10 +152,13 @@ function renderUsage() {
 	for (const p of usage.providers) {
 		html += '<div class="provider">' + esc(p.name) + '</div>';
 		for (const l of p.limits) {
-			const cls = l.usedPercent >= 100 || l.status === "exhausted" ? "full" : l.usedPercent >= 80 ? "warn" : "";
+			const cls = l.usedPercent >= 100 || l.status === "exhausted" ? "full" : l.usedPercent >= warnPercent ? "warn" : "";
 			html += '<div class="limit"><div class="row"><span>' + esc(l.label) + '</span><span>' + l.usedPercent + '%</span></div>'
 				+ '<div class="bar"><div class="fill ' + cls + '" style="width:' + l.usedPercent + '%"></div></div>'
-				+ (l.resetsAt ? '<div class="reset muted"><span>Resets in ' + until(l.resetsAt) + '</span><span>' + resetAt(l.resetsAt) + '</span></div>' : "")
+				+ (l.resetsAt ? '<div class="reset muted">'
+					+ (resetDisplay !== "time" ? '<span>Resets in ' + until(l.resetsAt) + '</span>' : "")
+					+ (resetDisplay !== "countdown" ? '<span class="at">' + resetAt(l.resetsAt) + '</span>' : "")
+					+ '</div>' : "")
 				+ '</div>';
 		}
 	}
@@ -147,7 +167,7 @@ function renderUsage() {
 
 const list = document.getElementById("list");
 const q = document.getElementById("q");
-let items = null;
+let items = null, groupBy;
 function group(ms) {
 	const now = new Date();
 	const day = 86400000, start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -157,26 +177,39 @@ function group(ms) {
 	return "Older";
 }
 const STATE_LABEL = { idle: "open, idle", working: "open, working", waiting: "open, needs input" };
+function headHtml(label) {
+	if (groupBy === "none") return "";
+	const cut = Math.max(0, label.lastIndexOf("/"), label.lastIndexOf("\\\\"));
+	return '<div class="group" title="' + esc(label) + '"><span>' + esc(label.slice(0, cut)) + '</span><span>' + esc(label.slice(cut)) + '</span></div>';
+}
+function rowHtml(s, detail) {
+	const ctx = { webviewSection: "session", file: s.file, id: s.id, sessionOpen: !!s.state, preventDefaultContextMenuItems: true };
+	return '<button class="item" tabindex="-1" data-file="' + esc(s.file) + '" data-vscode-context="' + esc(JSON.stringify(ctx)) + '"'
+		+ ' title="' + esc(s.title) + (s.state ? " (" + STATE_LABEL[s.state] + ")" : "") + '">'
+		+ '<span class="dot' + (s.state ? " " + s.state : "") + '"></span>'
+		+ '<span class="title">' + esc(s.title) + (detail ? '<span class="detail muted">' + esc(detail) + '</span>' : "") + '</span>'
+		+ '<span class="time muted">' + ago(s.time) + '</span></button>';
+}
 function renderSessions() {
 	if (items === null) { list.innerHTML = '<div class="muted">Loading…</div>'; return; }
 	const needle = q.value.trim().toLowerCase();
 	const matched = needle ? items.filter(s => (s.title + " " + s.detail).toLowerCase().includes(needle)) : items;
 	if (!matched.length) { list.innerHTML = '<div class="muted">' + (items.length ? "No matching sessions" : "No sessions yet") + '</div>'; return; }
-	// Open sessions lead in their own group; the rest follow by recency.
-	const shown = matched.filter(s => s.state).concat(matched.filter(s => !s.state));
+	// Open sessions lead; the rest keep their order inside their group. Only matched rows are
+	// grouped, so a group the search empties loses its header too.
+	const open = [], groups = new Map();
+	for (const s of matched) {
+		if (s.state) { open.push(s); continue; }
+		const g = groupBy === "none" ? "" : groupBy === "folder" ? s.folder : group(s.time);
+		const members = groups.get(g);
+		if (members) members.push(s);
+		else groups.set(g, [s]);
+	}
 	// Live sessions re-render this list about once a second; keep keyboard focus on the same row.
 	const focused = document.activeElement && document.activeElement.classList.contains("item") ? document.activeElement.dataset.file : null;
-	let html = "", last = "";
-	for (const s of shown) {
-		const g = s.state ? "Open" : group(s.modified);
-		if (g !== last) { html += '<div class="group muted">' + g + '</div>'; last = g; }
-		const ctx = { webviewSection: "session", file: s.file, id: s.id, sessionOpen: !!s.state, preventDefaultContextMenuItems: true };
-		html += '<button class="item" tabindex="-1" data-file="' + esc(s.file) + '" data-vscode-context="' + esc(JSON.stringify(ctx)) + '"'
-			+ ' title="' + esc(s.title) + (s.state ? " (" + STATE_LABEL[s.state] + ")" : "") + '">'
-			+ '<span class="dot' + (s.state ? " " + s.state : "") + '"></span>'
-			+ '<span class="title">' + esc(s.title) + (s.detail ? '<span class="detail muted">' + esc(s.detail) + '</span>' : "") + '</span>'
-			+ '<span class="time muted">' + ago(s.modified) + '</span></button>';
-	}
+	let html = open.length ? headHtml("Open") + open.map(s => rowHtml(s, s.detail)).join("") : "";
+	// A folder header already names the folder each row's detail would repeat.
+	for (const [label, members] of groups) html += headHtml(label) + members.map(s => rowHtml(s, groupBy === "folder" ? "" : s.detail)).join("");
 	list.innerHTML = html;
 	const rows = [...list.querySelectorAll(".item")];
 	const again = focused === null ? undefined : rows.find(r => r.dataset.file === focused);
@@ -216,10 +249,17 @@ q.addEventListener("keydown", e => {
 	else if (e.key === "Enter") { e.preventDefault(); first.click(); }
 });
 q.addEventListener("input", renderSessions);
+// Like native lists, the scrollbar thumb shows while the list is hovered or scrolling.
+let scrollEnd;
+list.addEventListener("scroll", () => {
+	list.classList.add("scrolling");
+	clearTimeout(scrollEnd);
+	scrollEnd = setTimeout(() => list.classList.remove("scrolling"), 800);
+});
 
 window.addEventListener("message", e => {
-	if (e.data.type === "usage") { usage = e.data.snapshot; renderUsage(); }
-	else if (e.data.type === "sessions") { items = e.data.items; renderSessions(); }
+	if (e.data.type === "usage") { ({ snapshot: usage, warnPercent, resetDisplay } = e.data); renderUsage(); }
+	else if (e.data.type === "sessions") { ({ items, groupBy } = e.data); renderSessions(); }
 });
 setInterval(() => { renderUsage(); renderSessions(); }, 60000);
 renderUsage();
@@ -232,16 +272,35 @@ interface SessionItem {
 	id: string;
 	title: string;
 	detail: string;
-	modified: number;
+	/** Modified or created time, per `omp.sessions.sortBy`: the row shows it and date groups use it. */
+	time: number;
+	/** Group label when grouping by folder. */
+	folder?: string;
 	/** Set only for sessions open in a terminal. */
 	state?: SessionState;
 }
 
-/** Sessions started in (or under) the open workspace folders; all sessions when no folder is open. */
+/** A workspace root goes by its name; anything else by the path its row shows as detail. */
+function folderLabel(folder: vscode.WorkspaceFolder | undefined, rel: string, roots: number): string {
+	if (!folder) return rel;
+	if (!rel) return folder.name;
+	// Each root can have a subfolder of the same name.
+	return roots > 1 ? path.join(folder.name, rel) : rel;
+}
+
+/**
+ * The sessions to list: started in or under the open workspace folders (every session with
+ * scope "all" or when no folder is open), empty ones only with showEmpty, newest first by sortBy.
+ */
 export function workspaceSessions(index: SessionIndex): SessionInfo[] {
-	const folders = vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
-	const all = index.list();
-	return folders.length ? all.filter((s) => folders.some((f) => isWithin(s.cwd, f))) : all;
+	const config = vscode.workspace.getConfiguration("omp");
+	const all = config.get<string>("sessions.scope", "workspace") === "all";
+	const folders = all ? [] : (vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? []);
+	const showEmpty = config.get<boolean>("sessions.showEmpty", false);
+	const sessions = index.list().filter((s) => (showEmpty || !s.empty) && (!folders.length || folders.some((f) => isWithin(s.cwd, f))));
+	// The index lists by modified time already.
+	if (config.get<string>("sessions.sortBy", "modified") === "created") sessions.sort((a, b) => b.created - a.created);
+	return sessions;
 }
 
 export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -261,6 +320,11 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			index.onDidChange(() => this.refreshSessions()),
 			tracker.onDidChange(() => this.refreshSessions()),
 			vscode.workspace.onDidChangeWorkspaceFolders(() => this.refreshSessions()),
+			vscode.workspace.onDidChangeConfiguration((e) => {
+				if (e.affectsConfiguration("omp.usage.refreshMinutes")) this.scheduleUsage();
+				if (e.affectsConfiguration("omp.usage")) this.postUsage();
+				if (e.affectsConfiguration("omp.sessions")) this.refreshSessions();
+			}),
 		);
 	}
 
@@ -294,14 +358,21 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 		clearInterval(this.usageTimer);
 		this.usageTimer = undefined;
 		if (!this.view?.visible) return;
-		const minutes = Math.max(1, vscode.workspace.getConfiguration("omp").get<number>("usageRefreshMinutes", 5));
+		const minutes = refreshMinutes();
 		const age = Date.now() - (this.usage.current?.fetchedAt ?? 0);
 		if (age > 60_000) void this.usage.refresh();
 		this.usageTimer = setInterval(() => void this.usage.refresh(), minutes * 60_000);
 	}
 
 	private postUsage(): void {
-		void this.view?.webview.postMessage({ type: "usage", snapshot: this.usage.current });
+		if (!this.view) return;
+		const snapshot = this.usage.current;
+		void this.view.webview.postMessage({
+			type: "usage",
+			snapshot: snapshot && { ...snapshot, providers: visibleProviders(snapshot.providers) },
+			warnPercent: warnPercent(),
+			resetDisplay: vscode.workspace.getConfiguration("omp").get<string>("usage.resetDisplay", "both"),
+		});
 	}
 
 	refreshSessions(force = false): void {
@@ -310,21 +381,27 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			return;
 		}
 		this.sessionsDirty = false;
+		const config = vscode.workspace.getConfiguration("omp");
+		const max = Math.max(1, config.get<number>("sessions.maxShown", 300));
+		const groupBy = config.get<string>("sessions.groupBy", "date");
+		const sortBy = config.get<string>("sessions.sortBy", "modified") === "created" ? "created" : "modified";
 		const open = this.tracker.openSessions();
 		const folders = vscode.workspace.workspaceFolders ?? [];
 		const items: SessionItem[] = [];
 		for (const s of workspaceSessions(this.index)) {
 			const live = open.get(normPath(s.file));
 			// Open sessions always show, however old.
-			if (items.length >= MAX_SESSIONS && !live) continue;
+			if (items.length >= max && !live) continue;
 			// Sessions from a subfolder (worktrees, scratch dirs) show where they ran.
 			const folder = folders.find((f) => isWithin(s.cwd, f.uri.fsPath));
 			const rel = folder ? path.relative(folder.uri.fsPath, s.cwd) : s.cwd;
 			// The hook reports state shortly after launch; until then an open session shows as idle.
 			const state = live ? (live.state ?? "idle") : undefined;
-			items.push({ file: s.file, id: s.id, title: s.title, detail: rel, modified: s.modified, state });
+			const item: SessionItem = { file: s.file, id: s.id, title: s.title, detail: rel, time: s[sortBy], state };
+			if (groupBy === "folder") item.folder = folderLabel(folder, rel, folders.length);
+			items.push(item);
 		}
-		void this.view.webview.postMessage({ type: "sessions", items });
+		void this.view.webview.postMessage({ type: "sessions", items, groupBy });
 	}
 
 	private open(file: string): void {

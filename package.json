@@ -96,6 +96,28 @@
         "command": "omp.session.delete",
         "title": "Delete Session...",
         "category": "OMP"
+      },
+      {
+        "command": "omp.focusNextWaiting",
+        "title": "Focus Next Session Needing Input",
+        "category": "OMP"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "omp.newSession",
+        "key": "ctrl+alt+o n",
+        "mac": "cmd+alt+o n"
+      },
+      {
+        "command": "omp.resumeSession",
+        "key": "ctrl+alt+o r",
+        "mac": "cmd+alt+o r"
+      },
+      {
+        "command": "omp.focusNextWaiting",
+        "key": "ctrl+alt+o w",
+        "mac": "cmd+alt+o w"
       }
     ],
     "menus": {
@@ -152,46 +174,201 @@
         { "command": "omp.session.delete", "when": "false" }
       ]
     },
-    "configuration": {
-      "title": "OMP",
-      "properties": {
-        "omp.executable": {
-          "type": "string",
-          "default": "omp",
-          "description": "omp executable name or absolute path."
-        },
-        "omp.agentDir": {
-          "type": "string",
-          "default": "",
-          "description": "omp agent directory. Empty uses PI_CODING_AGENT_DIR, then ~/.omp/agent."
-        },
-        "omp.terminalLocation": {
-          "type": "string",
-          "enum": [
-            "editor",
-            "panel"
-          ],
-          "default": "editor",
-          "description": "Where omp sessions open."
-        },
-        "omp.restoreOnStartup": {
-          "type": "boolean",
-          "default": true,
-          "description": "Reopen the omp sessions that were open when VS Code closed, in the same order."
-        },
-        "omp.usageRefreshMinutes": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "description": "How often the usage view refreshes while visible."
-        },
-        "omp.notifyWhenDone": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show a notification when an omp session finishes or asks a question while its terminal tab is not in view."
+    "configuration": [
+      {
+        "title": "Launch",
+        "order": 1,
+        "properties": {
+          "omp.executable": {
+            "type": "string",
+            "default": "omp",
+            "description": "omp executable name or absolute path."
+          },
+          "omp.agentDir": {
+            "type": "string",
+            "default": "",
+            "description": "omp agent directory. Empty uses PI_CODING_AGENT_DIR, then ~/.omp/agent."
+          },
+          "omp.extraArgs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "markdownDescription": "Extra command-line arguments for every omp this extension launches, for example `[\"--model\", \"sonnet\"]`."
+          },
+          "omp.env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "default": {},
+            "description": "Extra environment variables for every omp this extension launches."
+          },
+          "omp.newSessionCwd": {
+            "type": "string",
+            "enum": ["workspaceRoot", "activeFileFolder", "ask"],
+            "enumDescriptions": [
+              "The workspace folder. Multi-root workspaces ask which folder.",
+              "The folder of the active editor's file. Falls back to the workspace folder.",
+              "Always pick a folder."
+            ],
+            "default": "workspaceRoot",
+            "description": "Where New Session starts omp."
+          },
+          "omp.terminalLocation": {
+            "type": "string",
+            "enum": ["editor", "panel"],
+            "default": "editor",
+            "description": "Where omp sessions open."
+          },
+          "omp.terminalIcon": {
+            "type": "string",
+            "default": "sparkle",
+            "markdownDescription": "[Codicon](https://microsoft.github.io/vscode-codicons/dist/codicon.html) id for omp terminal tabs, without `$()`."
+          },
+          "omp.terminalColor": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Theme color id for omp terminal tabs, for example `terminal.ansiMagenta`. Empty uses the default color."
+          },
+          "omp.restoreOnStartup": {
+            "type": "string",
+            "enum": ["always", "ask", "never"],
+            "enumDescriptions": [
+              "Reopen them without asking.",
+              "Ask once before reopening them.",
+              "Do not reopen them."
+            ],
+            "default": "always",
+            "description": "Reopen the omp sessions that were open when VS Code closed, in the same order."
+          }
+        }
+      },
+      {
+        "title": "Usage",
+        "order": 2,
+        "properties": {
+          "omp.usage.refreshMinutes": {
+            "type": "number",
+            "default": 5,
+            "minimum": 1,
+            "description": "How often usage refreshes while the sidebar or the status bar item shows it."
+          },
+          "omp.usage.warnPercent": {
+            "type": "number",
+            "default": 80,
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Usage percent at which a meter turns to the warning color."
+          },
+          "omp.usage.providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["anthropic", "openai-codex", "openai", "google-gemini-cli"]
+            },
+            "uniqueItems": true,
+            "default": [],
+            "description": "Providers to show. Empty shows every provider omp reports."
+          },
+          "omp.usage.resetDisplay": {
+            "type": "string",
+            "enum": ["both", "countdown", "time"],
+            "enumDescriptions": [
+              "Countdown on the left, local reset time on the right.",
+              "Only the countdown.",
+              "Only the local reset time."
+            ],
+            "default": "both",
+            "description": "What each usage meter shows about its reset."
+          },
+          "omp.usage.statusBar": {
+            "type": "boolean",
+            "default": false,
+            "description": "Show the most-used limit in the status bar."
+          },
+          "omp.usage.notifyOnWarn": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Notify once when a limit reaches `#omp.usage.warnPercent#`. Notifies again after the limit resets."
+          }
+        }
+      },
+      {
+        "title": "Sessions",
+        "order": 3,
+        "properties": {
+          "omp.sessions.scope": {
+            "type": "string",
+            "enum": ["workspace", "all"],
+            "enumDescriptions": [
+              "Sessions started in or under the open workspace folders. All sessions when no folder is open.",
+              "Every omp session."
+            ],
+            "default": "workspace",
+            "description": "Which sessions the sidebar and Resume Session list."
+          },
+          "omp.sessions.maxShown": {
+            "type": "number",
+            "default": 300,
+            "minimum": 1,
+            "description": "Most sessions the sidebar lists. Open sessions always show."
+          },
+          "omp.sessions.showEmpty": {
+            "type": "boolean",
+            "default": false,
+            "description": "List sessions that have no prompt yet."
+          },
+          "omp.sessions.sortBy": {
+            "type": "string",
+            "enum": ["modified", "created"],
+            "default": "modified",
+            "description": "Order of the session list, newest first."
+          },
+          "omp.sessions.groupBy": {
+            "type": "string",
+            "enum": ["none", "date", "folder"],
+            "enumDescriptions": [
+              "One flat list, open sessions first.",
+              "Open, then Today, Yesterday, This Week, Older.",
+              "Open, then the folder each session ran in."
+            ],
+            "default": "date",
+            "description": "How the session list is grouped."
+          }
+        }
+      },
+      {
+        "title": "Notifications",
+        "order": 4,
+        "properties": {
+          "omp.notify.onFinish": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when a session finishes while its terminal tab is not in view."
+          },
+          "omp.notify.onInput": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when a session asks a question while its terminal tab is not in view."
+          },
+          "omp.notify.minWorkSeconds": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0,
+            "description": "Skip the finish notification when the agent worked for less than this many seconds. Questions always notify."
+          },
+          "omp.notify.style": {
+            "type": "string",
+            "enum": ["vscode", "system", "both"],
+            "enumDescriptions": [
+              "A VS Code notification.",
+              "An operating system notification with its sound, shown only while VS Code is not focused. Falls back to VS Code when unavailable.",
+              "A VS Code notification, plus a system notification while VS Code is not focused."
+            ],
+            "default": "vscode",
+            "description": "How session notifications appear."
+          }
         }
       }
-    }
+    ]
   },
   "scripts": {
     "compile": "tsc -p .",

@@ -10,6 +10,7 @@ export interface UsageLimit {
 }
 
 export interface UsageProvider {
+	id: string;
 	name: string;
 	limits: UsageLimit[];
 }
@@ -26,6 +27,34 @@ const PROVIDER_NAMES: Record<string, string> = {
 	openai: "OpenAI",
 	"google-gemini-cli": "Gemini",
 };
+
+export function visibleProviders(providers: UsageProvider[]): UsageProvider[] {
+	const config = vscode.workspace.getConfiguration("omp.usage");
+	const allowed = config.get<string[]>("providers", []);
+	if (!allowed.length) return providers;
+	return providers.filter((p) => allowed.includes(p.id));
+}
+
+export function warnPercent(): number {
+	const raw = vscode.workspace.getConfiguration("omp.usage").get<number>("warnPercent", 80);
+	return Math.max(1, Math.min(100, raw));
+}
+
+export function refreshMinutes(): number {
+	const raw = vscode.workspace.getConfiguration("omp.usage").get<number>("refreshMinutes", 5);
+	return Math.max(1, raw);
+}
+
+/** Countdown in the two largest units, zero units dropped: "4d 5h", "4h", "12m". Matches the sidebar. */
+export function formatCountdown(ms: number): string {
+	const m = Math.max(1, Math.ceil(ms / 60_000));
+	const d = Math.floor(m / 1440);
+	const h = Math.floor((m % 1440) / 60);
+	const min = m % 60;
+	if (d) return h ? `${d}d ${h}h` : `${d}d`;
+	if (h) return min ? `${h}h ${min}m` : `${h}h`;
+	return `${min}m`;
+}
 
 // Subset of `omp usage --json`. Account metadata (email, ids) is ignored on purpose.
 interface RawReport {
@@ -62,7 +91,7 @@ export function parseUsage(stdout: string): UsageProvider[] {
 				status: l.status ?? "ok",
 			});
 		}
-		if (limits.length) providers.push({ name, limits });
+		if (limits.length) providers.push({ id, name, limits });
 	}
 	return providers;
 }

@@ -7,7 +7,10 @@ export interface SessionInfo {
 	id: string;
 	file: string;
 	cwd: string;
+	/** Shown in lists; a placeholder when the session is empty. */
 	title: string;
+	/** No title and no prompt yet. Lists skip these unless `omp.sessions.showEmpty` is on. */
+	empty: boolean;
 	created: number;
 	modified: number;
 }
@@ -22,6 +25,7 @@ interface CacheEntry {
 const HEAD_BYTES = 16 * 1024;
 const FIRST_PROMPT_RE = /"role":"user","content":\[\{"type":"text","text":"((?:[^"\\]|\\.)*)/;
 const DEBOUNCE_MS = 1000;
+const EMPTY_TITLE = "(empty session)";
 
 function readHead(file: string): string {
 	const fd = fs.openSync(file, "r");
@@ -39,7 +43,7 @@ function oneLine(text: string, max = 120): string {
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** Title, header, and first prompt from a session file's head; null for empty or foreign files. */
+/** Title, header, and first prompt from a session file's head; null for foreign files. */
 export function parseSession(file: string, mtimeMs: number): SessionInfo | null {
 	const head = readHead(file);
 	let title = "";
@@ -58,11 +62,12 @@ export function parseSession(file: string, mtimeMs: number): SessionInfo | null 
 	if (!title) {
 		// Untitled sessions fall back to the first prompt; sessions without one are empty.
 		const m = FIRST_PROMPT_RE.exec(head);
-		if (!m) return null;
-		try {
-			title = JSON.parse(`"${m[1]}"`);
-		} catch {
-			title = m[1];
+		if (m) {
+			try {
+				title = JSON.parse(`"${m[1]}"`);
+			} catch {
+				title = m[1];
+			}
 		}
 	}
 	const created = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : NaN;
@@ -70,7 +75,8 @@ export function parseSession(file: string, mtimeMs: number): SessionInfo | null 
 		id: header.id,
 		file,
 		cwd: header.cwd,
-		title: oneLine(title),
+		title: title ? oneLine(title) : EMPTY_TITLE,
+		empty: !title,
 		created: Number.isFinite(created) ? created : mtimeMs,
 		modified: mtimeMs,
 	};
@@ -169,7 +175,7 @@ export class SessionIndex implements vscode.Disposable {
 			// unreadable; retried on the next change
 		}
 		this.cache.set(key, { mtimeMs, info });
-		// An empty session that stays empty does not change what is listed.
+		// A foreign file that stays foreign does not change what is listed.
 		return !!(info || cached?.info);
 	}
 
@@ -207,7 +213,7 @@ export class SessionIndex implements vscode.Disposable {
 		return dirty;
 	}
 
-	/** Every listable session, newest first. */
+	/** Every session, empty ones included, most recently modified first. */
 	list(): SessionInfo[] {
 		if (!this.scanned) this.scan();
 		if (!this.sorted) {
