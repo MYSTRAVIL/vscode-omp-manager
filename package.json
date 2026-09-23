@@ -2,7 +2,7 @@
   "name": "omp-manager",
   "displayName": "OMP Session Manager",
   "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "mystravil",
   "license": "MIT",
   "repository": {
@@ -172,12 +172,30 @@
         }
       ],
       "commandPalette": [
-        { "command": "omp.session.openInEditor", "when": "false" },
-        { "command": "omp.session.openInPanel", "when": "false" },
-        { "command": "omp.session.copyId", "when": "false" },
-        { "command": "omp.session.copyPath", "when": "false" },
-        { "command": "omp.session.reveal", "when": "false" },
-        { "command": "omp.session.delete", "when": "false" }
+        {
+          "command": "omp.session.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.openInPanel",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.copyId",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.reveal",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.delete",
+          "when": "false"
+        }
       ]
     },
     "configuration": [
@@ -197,19 +215,27 @@
           },
           "omp.extraArgs": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "default": [],
             "markdownDescription": "Extra command-line arguments for every omp this extension launches, for example `[\"--model\", \"sonnet\"]`."
           },
           "omp.env": {
             "type": "object",
-            "additionalProperties": { "type": "string" },
+            "additionalProperties": {
+              "type": "string"
+            },
             "default": {},
             "description": "Extra environment variables for every omp this extension launches."
           },
           "omp.newSessionCwd": {
             "type": "string",
-            "enum": ["workspaceRoot", "activeFileFolder", "ask"],
+            "enum": [
+              "workspaceRoot",
+              "activeFileFolder",
+              "ask"
+            ],
             "enumDescriptions": [
               "The workspace folder. Multi-root workspaces ask which folder.",
               "The folder of the active editor's file. Falls back to the workspace folder.",
@@ -220,7 +246,10 @@
           },
           "omp.terminalLocation": {
             "type": "string",
-            "enum": ["editor", "panel"],
+            "enum": [
+              "editor",
+              "panel"
+            ],
             "default": "editor",
             "description": "Where omp sessions open."
           },
@@ -236,7 +265,11 @@
           },
           "omp.restoreOnStartup": {
             "type": "string",
-            "enum": ["always", "ask", "never"],
+            "enum": [
+              "always",
+              "ask",
+              "never"
+            ],
             "enumDescriptions": [
               "Reopen them without asking.",
               "Ask once before reopening them.",
@@ -268,7 +301,12 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["anthropic", "openai-codex", "openai", "google-gemini-cli"]
+              "enum": [
+                "anthropic",
+                "openai-codex",
+                "openai",
+                "google-gemini-cli"
+              ]
             },
             "uniqueItems": true,
             "default": [],
@@ -276,7 +314,11 @@
           },
           "omp.usage.resetDisplay": {
             "type": "string",
-            "enum": ["both", "countdown", "time"],
+            "enum": [
+              "both",
+              "countdown",
+              "time"
+            ],
             "enumDescriptions": [
               "Countdown on the left, local reset time on the right.",
               "Only the countdown.",
@@ -303,7 +345,10 @@
         "properties": {
           "omp.sessions.scope": {
             "type": "string",
-            "enum": ["workspace", "all"],
+            "enum": [
+              "workspace",
+              "all"
+            ],
             "enumDescriptions": [
               "Sessions started in or under the open workspace folders. All sessions when no folder is open.",
               "Every omp session."
@@ -324,13 +369,20 @@
           },
           "omp.sessions.sortBy": {
             "type": "string",
-            "enum": ["modified", "created"],
+            "enum": [
+              "modified",
+              "created"
+            ],
             "default": "modified",
             "description": "Order of the session list, newest first."
           },
           "omp.sessions.groupBy": {
             "type": "string",
-            "enum": ["none", "date", "folder"],
+            "enum": [
+              "none",
+              "date",
+              "folder"
+            ],
             "enumDescriptions": [
               "One flat list, open sessions first.",
               "Open, then Today, Yesterday, This Week, Older.",
@@ -363,7 +415,11 @@
           },
           "omp.notify.style": {
             "type": "string",
-            "enum": ["vscode", "system", "both"],
+            "enum": [
+              "vscode",
+              "system",
+              "both"
+            ],
             "enumDescriptions": [
               "A VS Code notification.",
               "An operating system notification with its sound, shown only while VS Code is not focused. Falls back to VS Code when unavailable.",
