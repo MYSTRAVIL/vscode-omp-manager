@@ -95,10 +95,11 @@ function ago(ms) {
 	return new Date(ms).toLocaleDateString();
 }
 function until(ms) {
-	const s = Math.max(0, (ms - Date.now()) / 1000);
-	if (s < 3600) return Math.max(1, Math.ceil(s / 60)) + "m";
-	if (s < 86400) return Math.round(s / 3600) + "h";
-	return Math.round(s / 86400) + "d";
+	const m = Math.max(1, Math.ceil((ms - Date.now()) / 60000));
+	const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
+	if (d) return d + "d" + (h ? " " + h + "h" : "");
+	if (h) return h + "h" + (min ? " " + min + "m" : "");
+	return min + "m";
 }
 
 // Collapse state survives the webview being hidden and restored.
