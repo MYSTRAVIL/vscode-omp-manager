@@ -10,3 +10,5 @@ tsconfig.test.json
 .github/**
 media/screenshot.png
 *.vsix
+.local/**
+.env
