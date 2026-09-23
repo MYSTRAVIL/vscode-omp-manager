@@ -1,0 +1,134 @@
+{
+  "name": "omp-manager",
+  "displayName": "OMP Session Manager",
+  "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
+  "version": "0.1.0",
+  "publisher": "mystravil",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "omp",
+          "title": "OMP",
+          "icon": "media/omp.svg"
+        }
+      ]
+    },
+    "views": {
+      "omp": [
+        {
+          "type": "webview",
+          "id": "omp.usage",
+          "name": "Account & Usage"
+        },
+        {
+          "type": "webview",
+          "id": "omp.sessions",
+          "name": "Session Manager"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "omp.newSession",
+        "title": "New Session",
+        "category": "OMP",
+        "icon": "$(add)"
+      },
+      {
+        "command": "omp.resumeSession",
+        "title": "Resume Session...",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.refreshUsage",
+        "title": "Refresh Usage",
+        "category": "OMP",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "omp.refreshSessions",
+        "title": "Refresh Sessions",
+        "category": "OMP",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "omp.refreshUsage",
+          "when": "view == omp.usage",
+          "group": "navigation"
+        },
+        {
+          "command": "omp.refreshSessions",
+          "when": "view == omp.sessions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "omp.newSession",
+          "when": "view == omp.sessions",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "OMP",
+      "properties": {
+        "omp.executable": {
+          "type": "string",
+          "default": "omp",
+          "description": "omp executable name or absolute path."
+        },
+        "omp.agentDir": {
+          "type": "string",
+          "default": "",
+          "description": "omp agent directory. Empty uses PI_CODING_AGENT_DIR, then ~/.omp/agent."
+        },
+        "omp.terminalLocation": {
+          "type": "string",
+          "enum": [
+            "editor",
+            "panel"
+          ],
+          "default": "editor",
+          "description": "Where omp sessions open."
+        },
+        "omp.restoreOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reopen the omp sessions that were open when VS Code closed, in the same order."
+        },
+        "omp.usageRefreshMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "How often the usage view refreshes while visible."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "package": "vsce package --no-dependencies --skip-license --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.6.0"
+  }
+}
