@@ -41,7 +41,7 @@ section.collapsed#sessions .body { display: none; }
 .fill { height: 100%; background: var(--vscode-descriptionForeground); }
 .fill.warn { background: var(--vscode-editorWarning-foreground); }
 .fill.full { background: var(--vscode-errorForeground); }
-.reset { font-size: 11px; margin-top: 4px; }
+.reset { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 4px; }
 
 .new { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 4px; margin: 4px 0 8px; border-radius: 4px; text-align: left; }
 .new:hover, .item:hover { background: var(--vscode-list-hoverBackground); }
@@ -101,6 +101,12 @@ function until(ms) {
 	if (h) return h + "h" + (min ? " " + min + "m" : "");
 	return min + "m";
 }
+// Local wall-clock reset time; adds the weekday once the reset is not today.
+function resetAt(ms) {
+	const d = new Date(ms);
+	const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+	return d.toDateString() === new Date().toDateString() ? time : d.toLocaleDateString([], { weekday: "short" }) + " " + time;
+}
 
 // Collapse state survives the webview being hidden and restored.
 const state = vscode.getState() || { collapsed: {} };
@@ -132,7 +138,7 @@ function renderUsage() {
 			const cls = l.usedPercent >= 100 || l.status === "exhausted" ? "full" : l.usedPercent >= 80 ? "warn" : "";
 			html += '<div class="limit"><div class="row"><span>' + esc(l.label) + '</span><span>' + l.usedPercent + '%</span></div>'
 				+ '<div class="bar"><div class="fill ' + cls + '" style="width:' + l.usedPercent + '%"></div></div>'
-				+ (l.resetsAt ? '<div class="reset muted">Resets in ' + until(l.resetsAt) + '</div>' : "")
+				+ (l.resetsAt ? '<div class="reset muted"><span>Resets in ' + until(l.resetsAt) + '</span><span>' + resetAt(l.resetsAt) + '</span></div>' : "")
 				+ '</div>';
 		}
 	}
