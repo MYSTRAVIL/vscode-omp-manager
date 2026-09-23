@@ -103,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		usage,
 		tracker,
 		view,
-		new UsageMonitor(usage),
+		new UsageMonitor(usage, context.globalState),
 		tracker.onDidChangeState(notify),
 		vscode.commands.registerCommand("omp.focusNextWaiting", focusNextWaiting),
 		vscode.window.registerWebviewViewProvider("omp.main", view),

@@ -77,9 +77,34 @@ function report(ctx: unknown, state: SessionState): void {
 		updatedAt: Date.now(),
 	};
 	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const json = JSON.stringify(record, null, 2);
 	const tmp = `${file}.${process.pid}.tmp`;
-	fs.writeFileSync(tmp, JSON.stringify(record, null, 2));
-	fs.renameSync(tmp, file);
+	fs.writeFileSync(tmp, json);
+	try {
+		replace(tmp, file, json);
+	} finally {
+		fs.rmSync(tmp, { force: true });
+	}
+}
+
+// Windows refuses to replace a file another process has open (the VS Code watcher reading
+// it, antivirus), which fails the rename with EPERM. Retry briefly, then write in place:
+// a reader can catch that write half done, but the watcher fires again once it completes.
+const RENAME_ATTEMPTS = 5;
+const RENAME_RETRY_MS = 10;
+function replace(tmp: string, file: string, json: string): void {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			fs.renameSync(tmp, file);
+			return;
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") throw err;
+			if (attempt === RENAME_ATTEMPTS) break;
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_RETRY_MS);
+		}
+	}
+	fs.writeFileSync(file, json);
 }
 
 // A full VS Code shutdown records a caught SIGHUP; a crash records a fatal exit.

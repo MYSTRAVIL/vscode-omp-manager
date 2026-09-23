@@ -9,13 +9,16 @@ import { formatCountdown, refreshMinutes, type UsageLimit, type UsageService, vi
 export class UsageMonitor implements vscode.Disposable {
 	private readonly item = vscode.window.createStatusBarItem("omp.usage", vscode.StatusBarAlignment.Right);
 	private readonly disposables: vscode.Disposable[] = [];
-	// Provider id + label -> reset time of the window already warned about.
-	private readonly warned = new Map<string, number | undefined>();
+	private static readonly WARNED_KEY = "omp.usage.warned";
 	private refreshTimer: NodeJS.Timeout | undefined;
 	// The countdown in the item goes stale between refreshes.
 	private tickTimer: NodeJS.Timeout | undefined;
 
-	constructor(private readonly usage: UsageService) {
+	/** `state`: global memento, so a limit warned in one window is not warned again in the next. */
+	constructor(
+		private readonly usage: UsageService,
+		private readonly state: vscode.Memento,
+	) {
 		this.item.name = "OMP Usage";
 		this.item.command = "omp.main.focus";
 		this.disposables.push(
@@ -86,24 +89,34 @@ export class UsageMonitor implements vscode.Disposable {
 		this.item.show();
 	}
 
-	/** Once per limit per reset window. omp's reset time can drift between fetches, so a new window starts only once the warned one has passed. */
+	/**
+	 * Once per limit per reset window, across windows and restarts. omp's reset time can drift
+	 * between fetches, so a new window starts only once the warned one has passed. Two windows
+	 * refreshing in the same moment can both warn; globalState does not sync that fast.
+	 */
 	private warn(): void {
 		const snapshot = this.usage.current;
 		if (!snapshot || !vscode.workspace.getConfiguration("omp.usage").get<boolean>("notifyOnWarn", true)) return;
 		const threshold = warnPercent();
+		const now = Date.now();
+		// Provider id + label -> reset time of the window already warned about; null when omp gave none.
+		const warned = { ...this.state.get<Record<string, number | null>>(UsageMonitor.WARNED_KEY, {}) };
+		let changed = false;
 		for (const p of visibleProviders(snapshot.providers)) {
 			for (const l of p.limits) {
-				const key = `${p.id}\n${l.label}`;
 				if (l.usedPercent < threshold) continue;
-				if (this.warned.has(key)) {
-					const until = this.warned.get(key);
-					if (until === undefined || Date.now() < until) continue;
-				}
-				this.warned.set(key, l.resetsAt);
+				const key = `${p.id}\n${l.label}`;
+				const until = warned[key];
+				if (until === null || (until !== undefined && now < until)) continue;
+				warned[key] = l.resetsAt ?? null;
+				changed = true;
 				const reset = l.resetsAt ? ` (resets ${resetTime(l.resetsAt)})` : "";
 				void vscode.window.showWarningMessage(`${p.name} ${l.label} limit at ${l.usedPercent}%${reset}`);
 			}
 		}
+		if (!changed) return;
+		for (const [key, until] of Object.entries(warned)) if (until !== null && until <= now) delete warned[key];
+		void this.state.update(UsageMonitor.WARNED_KEY, warned);
 	}
 
 	dispose(): void {
