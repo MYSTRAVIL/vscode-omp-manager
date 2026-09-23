@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { SessionIndex } from "./sessions";
 import { TerminalTracker } from "./tracker";
 import { UsageService } from "./usage";
-import { SessionsViewProvider, UsageViewProvider, workspaceSessions } from "./views";
+import { OmpViewProvider, workspaceSessions } from "./views";
 
 let tracker: TerminalTracker | undefined;
 
@@ -22,20 +22,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		if (picked) t.open({ cwd: picked.uri.fsPath });
 	};
 
-	const sessionsView = new SessionsViewProvider(index, t, () => void newSession());
-	const usageView = new UsageViewProvider(usage);
+	const view = new OmpViewProvider(index, t, usage, () => void newSession());
 
 	context.subscriptions.push(
 		index,
 		usage,
 		t,
-		sessionsView,
-		usageView,
-		vscode.window.registerWebviewViewProvider("omp.usage", usageView),
-		vscode.window.registerWebviewViewProvider("omp.sessions", sessionsView),
+		view,
+		vscode.window.registerWebviewViewProvider("omp.main", view),
 		vscode.commands.registerCommand("omp.newSession", newSession),
-		vscode.commands.registerCommand("omp.refreshUsage", () => usage.refresh()),
-		vscode.commands.registerCommand("omp.refreshSessions", () => sessionsView.refresh(true)),
+		vscode.commands.registerCommand("omp.refresh", () => {
+			view.refreshSessions(true);
+			return usage.refresh();
+		}),
 		vscode.commands.registerCommand("omp.resumeSession", async () => {
 			const picked = await vscode.window.showQuickPick(
 				workspaceSessions(index).map((s) => ({

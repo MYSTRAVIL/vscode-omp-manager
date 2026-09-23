@@ -30,13 +30,8 @@
       "omp": [
         {
           "type": "webview",
-          "id": "omp.usage",
-          "name": "Account & Usage"
-        },
-        {
-          "type": "webview",
-          "id": "omp.sessions",
-          "name": "Session Manager"
+          "id": "omp.main",
+          "name": "OMP"
         }
       ]
     },
@@ -53,14 +48,8 @@
         "category": "OMP"
       },
       {
-        "command": "omp.refreshUsage",
-        "title": "Refresh Usage",
-        "category": "OMP",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "omp.refreshSessions",
-        "title": "Refresh Sessions",
+        "command": "omp.refresh",
+        "title": "Refresh",
         "category": "OMP",
         "icon": "$(refresh)"
       }
@@ -68,19 +57,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "omp.refreshUsage",
-          "when": "view == omp.usage",
-          "group": "navigation"
-        },
-        {
-          "command": "omp.refreshSessions",
-          "when": "view == omp.sessions",
-          "group": "navigation@2"
-        },
-        {
           "command": "omp.newSession",
-          "when": "view == omp.sessions",
+          "when": "view == omp.main",
           "group": "navigation@1"
+        },
+        {
+          "command": "omp.refresh",
+          "when": "view == omp.main",
+          "group": "navigation@2"
         }
       ]
     },
