@@ -41,7 +41,6 @@ interface Tracked {
 export interface LaunchOptions {
 	cwd?: string;
 	sessionFile?: string;
-	title?: string;
 	preserveFocus?: boolean;
 }
 
@@ -83,10 +82,7 @@ export class TerminalTracker implements vscode.Disposable {
 	private readonly changed = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.changed.event;
 
-	constructor(
-		private readonly ctx: vscode.ExtensionContext,
-		private readonly titleOf: (sessionFile: string) => string | undefined,
-	) {}
+	constructor(private readonly ctx: vscode.ExtensionContext) {}
 
 	async start(): Promise<void> {
 		const dir = terminalMapDir();
@@ -135,10 +131,11 @@ export class TerminalTracker implements vscode.Disposable {
 
 	private launch(opts: LaunchOptions): vscode.Terminal {
 		const key = crypto.randomUUID();
-		const title = opts.title ?? (opts.sessionFile ? this.titleOf(opts.sessionFile) : undefined);
 		const inPanel = vscode.workspace.getConfiguration("omp").get<string>("terminalLocation") === "panel";
 		const terminal = vscode.window.createTerminal({
-			name: title ? `omp · ${title}` : "omp",
+			// No `name`: a fixed name would pin the tab label. Without one, the tab follows
+			// the title omp sets (`π > <session title>`) when `terminal.integrated.tabs.title`
+			// includes `${sequence}`.
 			shellPath: ompExecutable(),
 			shellArgs: opts.sessionFile ? ["--resume", opts.sessionFile] : [],
 			cwd: opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : undefined,

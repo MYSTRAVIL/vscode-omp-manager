@@ -274,7 +274,7 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
 	private open(file: string): void {
 		const info = this.index.find(file);
-		this.tracker.open({ sessionFile: file, cwd: info?.cwd, title: info?.title });
+		this.tracker.open({ sessionFile: file, cwd: info?.cwd });
 	}
 
 	dispose(): void {

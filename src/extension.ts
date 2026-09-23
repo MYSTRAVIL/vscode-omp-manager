@@ -9,7 +9,7 @@ let tracker: TerminalTracker | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const index = new SessionIndex();
 	const usage = new UsageService();
-	const t = new TerminalTracker(context, (file) => index.find(file)?.title);
+	const t = new TerminalTracker(context);
 	tracker = t;
 
 	const newSession = async () => {
@@ -45,7 +45,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 				})),
 				{ placeHolder: "Resume an omp session", matchOnDetail: true },
 			);
-			if (picked) t.open({ sessionFile: picked.session.file, cwd: picked.session.cwd, title: picked.session.title });
+			if (picked) t.open({ sessionFile: picked.session.file, cwd: picked.session.cwd });
 		}),
 	);
 
