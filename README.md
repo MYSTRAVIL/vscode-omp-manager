@@ -100,7 +100,7 @@ npm test        # unit tests with a vscode stub
 1. Add a `## <version>` section to `CHANGELOG.md`.
 2. Run `npm version patch` (or `minor`, `major`). It bumps `package.json`, commits, and tags `v<version>`.
 3. Run `git push --follow-tags`. The Release workflow tests, packages, and publishes a GitHub release with the `.vsix` and the changelog section as notes.
-4. Download the `.vsix` from the release. On the [publisher page](https://marketplace.visualstudio.com/manage/publishers/mystravil), open the extension's **...** menu, choose **Update**, and upload it.
+4. Download the `.vsix` from the release. On the publisher page, <https://marketplace.visualstudio.com/manage/publishers/MYSTRAVIL>, open the extension's **...** menu, choose **Update**, and upload it.
 
 ## License
 
