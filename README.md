@@ -63,6 +63,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 | `omp.usage.warnPercent` | `80` | Percent at which a meter turns to the warning color. |
 | `omp.usage.providers` | `[]` | Providers to show. Empty shows all. |
 | `omp.usage.resetDisplay` | `both` | Show the reset as a `countdown`, the local `time`, or `both`. |
+| `omp.usage.showPace` | `true` | Mark the even-pace point on each meter and show how far under or over pace usage is. |
 | `omp.usage.statusBar` | `false` | Show the most-used limit in the status bar. |
 | `omp.usage.notifyOnWarn` | `true` | Notify once per reset window when a limit reaches the warn percent. |
 

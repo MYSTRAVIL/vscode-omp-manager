@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { formatCountdown, refreshMinutes, type UsageLimit, type UsageService, visibleProviders, warnPercent } from "./usage";
+import { formatCountdown, paceHeadroom, refreshMinutes, showPace, type UsageLimit, type UsageService, visibleProviders, warnPercent } from "./usage";
 
 /**
  * Usage outside the sidebar: a status bar item for the most-used limit, and a warning
@@ -66,10 +66,14 @@ export class UsageMonitor implements vscode.Disposable {
 		const providers = visibleProviders(snapshot.providers);
 		let worst: { name: string; limit: UsageLimit } | undefined;
 		const lines: string[] = [];
+		const pace = showPace();
+		const now = Date.now();
 		for (const p of providers) {
 			for (const l of p.limits) {
 				if (!worst || l.usedPercent > worst.limit.usedPercent) worst = { name: p.name, limit: l };
-				lines.push(`${p.name} ${l.label}: ${l.usedPercent}%${l.resetsAt ? `, resets ${resetTime(l.resetsAt)}` : ""}`);
+				const headroom = pace ? paceHeadroom(l, now) : undefined;
+				const paceText = headroom === undefined ? "" : headroom >= 0 ? `, ${headroom}% under pace` : `, ${-headroom}% over pace`;
+				lines.push(`${p.name} ${l.label}: ${l.usedPercent}%${paceText}${l.resetsAt ? `, resets ${resetTime(l.resetsAt)}` : ""}`);
 			}
 		}
 		if (snapshot.error) lines.push(`Last refresh failed: ${snapshot.error}`);

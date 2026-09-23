@@ -6,6 +6,8 @@ export interface UsageLimit {
 	label: string;
 	usedPercent: number;
 	resetsAt?: number;
+	/** Window length; with `resetsAt` it gives the window start for pacing. */
+	windowMs?: number;
 	status: string;
 }
 
@@ -45,6 +47,20 @@ export function refreshMinutes(): number {
 	return Math.max(1, raw);
 }
 
+export function showPace(): boolean {
+	return vscode.workspace.getConfiguration("omp.usage").get<boolean>("showPace", true);
+}
+
+/**
+ * Percentage points under (positive) or over (negative) an even pace through the limit's window:
+ * the elapsed share of the window minus the used share. Undefined without a window. Matches the sidebar.
+ */
+export function paceHeadroom(limit: UsageLimit, now: number): number | undefined {
+	if (!limit.resetsAt || !limit.windowMs) return undefined;
+	const elapsed = Math.min(Math.max((now - (limit.resetsAt - limit.windowMs)) / limit.windowMs, 0), 1);
+	return Math.round(elapsed * 100 - limit.usedPercent);
+}
+
 /** Countdown in the two largest units, zero units dropped: "4d 5h", "4h", "12m". Matches the sidebar. */
 export function formatCountdown(ms: number): string {
 	const m = Math.max(1, Math.ceil(ms / 60_000));
@@ -61,7 +77,7 @@ interface RawReport {
 	provider?: string;
 	limits?: Array<{
 		label?: string;
-		window?: { label?: string; resetsAt?: number };
+		window?: { label?: string; resetsAt?: number; durationMs?: number };
 		amount?: { usedFraction?: number; used?: number; limit?: number };
 		status?: string;
 	}>;
@@ -88,6 +104,7 @@ export function parseUsage(stdout: string): UsageProvider[] {
 				label: label.startsWith(`${name} `) ? label.slice(name.length + 1) : label,
 				usedPercent: Math.round(Math.min(Math.max(fraction, 0), 1) * 100),
 				resetsAt: l.window?.resetsAt,
+				windowMs: l.window?.durationMs,
 				status: l.status ?? "ok",
 			});
 		}

@@ -327,6 +327,11 @@
             "default": "both",
             "description": "What each usage meter shows about its reset."
           },
+          "omp.usage.showPace": {
+            "type": "boolean",
+            "default": true,
+            "description": "Mark where each meter would be at an even pace through its window, and show how far under or over that pace usage is."
+          },
           "omp.usage.statusBar": {
             "type": "boolean",
             "default": false,

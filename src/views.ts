@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { isWithin, normPath } from "./config";
 import type { SessionIndex, SessionInfo } from "./sessions";
 import type { SessionState, TerminalTracker } from "./tracker";
-import { refreshMinutes, type UsageService, visibleProviders, warnPercent } from "./usage";
+import { refreshMinutes, showPace, type UsageService, visibleProviders, warnPercent } from "./usage";
 
 // One webview holds both sections. Separate VS Code views split the sidebar height
 // between them and cannot size to content; here usage takes its natural height and
@@ -38,10 +38,14 @@ section.collapsed#sessions .body { display: none; }
 .limit { margin: 0 0 12px; }
 .limit:last-child { margin-bottom: 2px; }
 .row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-.bar { height: 4px; border-radius: 2px; background: var(--vscode-editorWidget-border, rgba(128,128,128,.25)); overflow: hidden; }
+.bar { position: relative; height: 4px; border-radius: 2px; background: var(--vscode-editorWidget-border, rgba(128,128,128,.25)); overflow: hidden; }
 .fill { height: 100%; background: var(--vscode-descriptionForeground); }
 .fill.warn { background: var(--vscode-editorWarning-foreground); }
 .fill.full { background: var(--vscode-errorForeground); }
+/* Where usage would be at an even pace through the window. */
+.mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--vscode-foreground); }
+.pace { font-size: 11px; margin-right: 6px; }
+.pace.over { color: var(--vscode-editorWarning-foreground); }
 .reset { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 4px; }
 /* The local time keeps its right-hand place when the countdown is hidden. */
 .reset .at { margin-left: auto; }
@@ -146,17 +150,25 @@ for (const head of document.querySelectorAll(".head")) {
 applyCollapsed();
 
 const usageBody = document.getElementById("usage-body");
-let usage, warnPercent, resetDisplay;
+let usage, warnPercent, resetDisplay, showPace;
 function renderUsage() {
 	if (!usage) { usageBody.innerHTML = '<div class="muted">Loading usage…</div>'; return; }
 	let html = usage.error ? '<div class="error">' + esc(usage.error) + '</div>' : "";
 	if (!usage.providers.length && !usage.error) html += '<div class="muted">No usage data. Log in with omp first.</div>';
+	const now = Date.now();
 	for (const p of usage.providers) {
 		html += '<div class="provider">' + esc(p.name) + '</div>';
 		for (const l of p.limits) {
 			const cls = l.usedPercent >= 100 || l.status === "exhausted" ? "full" : l.usedPercent >= warnPercent ? "warn" : "";
-			html += '<div class="limit"><div class="row"><span>' + esc(l.label) + '</span><span>' + l.usedPercent + '%</span></div>'
-				+ '<div class="bar"><div class="fill ' + cls + '" style="width:' + l.usedPercent + '%"></div></div>'
+			// Matches paceHeadroom in usage.ts.
+			const elapsed = showPace && l.resetsAt && l.windowMs ? Math.min(Math.max((now - (l.resetsAt - l.windowMs)) / l.windowMs, 0), 1) * 100 : null;
+			const headroom = elapsed === null ? null : Math.round(elapsed - l.usedPercent);
+			const pace = headroom === null ? "" : headroom >= 0
+				? '<span class="pace muted">' + headroom + '% under pace</span>'
+				: '<span class="pace over">' + -headroom + '% over pace</span>';
+			html += '<div class="limit"><div class="row"><span>' + esc(l.label) + '</span><span>' + pace + l.usedPercent + '%</span></div>'
+				+ '<div class="bar"><div class="fill ' + cls + '" style="width:' + l.usedPercent + '%"></div>'
+				+ (elapsed === null ? "" : '<div class="mark" style="left:' + elapsed + '%"></div>') + '</div>'
 				+ (l.resetsAt ? '<div class="reset muted">'
 					+ (resetDisplay !== "time" ? '<span>Resets in ' + until(l.resetsAt) + '</span>' : "")
 					+ (resetDisplay !== "countdown" ? '<span class="at">' + resetAt(l.resetsAt) + '</span>' : "")
@@ -260,7 +272,7 @@ list.addEventListener("scroll", () => {
 });
 
 window.addEventListener("message", e => {
-	if (e.data.type === "usage") { ({ snapshot: usage, warnPercent, resetDisplay } = e.data); renderUsage(); }
+	if (e.data.type === "usage") { ({ snapshot: usage, warnPercent, resetDisplay, showPace } = e.data); renderUsage(); }
 	else if (e.data.type === "sessions") { ({ items, groupBy } = e.data); renderSessions(); }
 });
 setInterval(() => { renderUsage(); renderSessions(); }, 60000);
@@ -374,6 +386,7 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 			snapshot: snapshot && { ...snapshot, providers: visibleProviders(snapshot.providers) },
 			warnPercent: warnPercent(),
 			resetDisplay: vscode.workspace.getConfiguration("omp").get<string>("usage.resetDisplay", "both"),
+			showPace: showPace(),
 		});
 	}
 

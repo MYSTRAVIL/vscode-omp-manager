@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Usage meters show pacing: a marker where usage would be at an even pace through the window, and how far under or over that pace you are. Toggle with `omp.usage.showPace`.
+
 ## 0.1.1
 
 - Sidebar content uses more of the width: 8px from the left edge, and the right edge lines up with the session list's scrollbar lane.
