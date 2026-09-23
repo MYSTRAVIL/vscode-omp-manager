@@ -2,7 +2,7 @@
   "name": "omp-manager",
   "displayName": "OMP Session Manager",
   "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "mystravil",
   "license": "MIT",
   "repository": {
