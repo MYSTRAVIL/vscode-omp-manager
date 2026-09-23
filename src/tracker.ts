@@ -13,8 +13,15 @@ const STATE_KEY = "omp.openSessions";
 // Removal waits this long so a closing window never forgets its sessions.
 const CLOSE_GRACE_MS = 1500;
 const SPAWN_WAIT_MS = 10_000;
+// omp reports its session a second or two after it starts. Silence past this means
+// the hook did not load, and restore cannot follow the terminal.
+const REPORT_TIMEOUT_MS = 20_000;
 // Map files written for omp started by hand in a shell terminal, not by this extension.
 const ADOPTED_PREFIX = "pid-";
+
+/** What the omp in a terminal is doing, as reported by the hook. */
+export type SessionState = "idle" | "working" | "waiting";
+const STATES: readonly string[] = ["idle", "working", "waiting"] satisfies SessionState[];
 
 /** Written by the omp hook to `<agentDir>/vscode-terminals/<key>.json`. */
 interface MapRecord {
@@ -23,6 +30,7 @@ interface MapRecord {
 	ppid?: number;
 	sessionFile?: string;
 	cwd?: string;
+	state?: string;
 	updatedAt?: number;
 }
 
@@ -36,12 +44,29 @@ interface Tracked {
 	terminal: vscode.Terminal;
 	cwd: string;
 	sessionFile?: string;
+	state?: SessionState;
+	/** The hook has written a record for this terminal. */
+	reported: boolean;
+}
+
+export interface OpenSession {
+	terminal: vscode.Terminal;
+	state?: SessionState;
+}
+
+export interface StateChange {
+	sessionFile: string;
+	terminal: vscode.Terminal;
+	previous?: SessionState;
+	state: SessionState;
 }
 
 export interface LaunchOptions {
 	cwd?: string;
 	sessionFile?: string;
 	preserveFocus?: boolean;
+	/** Overrides the `omp.terminalLocation` setting. */
+	location?: "editor" | "panel";
 }
 
 function fileExists(file: string): boolean {
@@ -76,13 +101,21 @@ export class TerminalTracker implements vscode.Disposable {
 	private tracked: Tracked[] = [];
 	private readonly pids = new Map<vscode.Terminal, number>();
 	private readonly pendingClose = new Map<vscode.Terminal, NodeJS.Timeout>();
+	private readonly reportTimers = new Set<NodeJS.Timeout>();
 	private readonly disposables: vscode.Disposable[] = [];
 	private watcher: fs.FSWatcher | undefined;
 	private restoring = false;
+	private warnedUnreported = false;
 	private readonly changed = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.changed.event;
+	private readonly stateChanged = new vscode.EventEmitter<StateChange>();
+	readonly onDidChangeState = this.stateChanged.event;
 
-	constructor(private readonly ctx: vscode.ExtensionContext) {}
+	/** `hookPath`: the bundled omp extension that reports each terminal's session. */
+	constructor(
+		private readonly ctx: vscode.ExtensionContext,
+		private readonly hookPath: string,
+	) {}
 
 	async start(): Promise<void> {
 		const dir = terminalMapDir();
@@ -115,29 +148,43 @@ export class TerminalTracker implements vscode.Disposable {
 		this.changed.fire();
 	}
 
-	/** Session file -> terminal for every open omp terminal. */
-	openSessions(): Map<string, vscode.Terminal> {
-		const out = new Map<string, vscode.Terminal>();
-		for (const t of this.tracked) if (t.sessionFile) out.set(normPath(t.sessionFile), t.terminal);
+	/** Session file (normalized) -> terminal and state, for every open omp terminal. */
+	openSessions(): Map<string, OpenSession> {
+		const out = new Map<string, OpenSession>();
+		for (const t of this.tracked) {
+			if (t.sessionFile) out.set(normPath(t.sessionFile), { terminal: t.terminal, state: t.state });
+		}
 		return out;
 	}
 
-	/** Focuses the terminal already running `sessionFile`, or resumes it in a new one. */
-	open(opts: LaunchOptions): void {
+	/**
+	 * Focuses the terminal already running `sessionFile`, or resumes it in a new one.
+	 * With `location`, an open terminal also moves there.
+	 */
+	async open(opts: LaunchOptions): Promise<void> {
 		const existing = opts.sessionFile ? this.openSessions().get(normPath(opts.sessionFile)) : undefined;
-		if (existing) existing.show(opts.preserveFocus);
-		else this.launch(opts);
+		if (!existing) {
+			this.launch(opts);
+			return;
+		}
+		existing.terminal.show(opts.preserveFocus);
+		// Both commands act on the active terminal, which show() just set.
+		if (opts.location === "panel") await vscode.commands.executeCommand("workbench.action.terminal.moveToTerminalPanel");
+		else if (opts.location === "editor") await vscode.commands.executeCommand("workbench.action.terminal.moveToEditor");
 	}
 
 	private launch(opts: LaunchOptions): vscode.Terminal {
 		const key = crypto.randomUUID();
-		const inPanel = vscode.workspace.getConfiguration("omp").get<string>("terminalLocation") === "panel";
+		const location = opts.location ?? vscode.workspace.getConfiguration("omp").get<string>("terminalLocation");
+		const inPanel = location === "panel";
+		const args = ["-e", this.hookPath];
+		if (opts.sessionFile) args.push("--resume", opts.sessionFile);
 		const terminal = vscode.window.createTerminal({
 			// No `name`: a fixed name would pin the tab label. Without one, the tab follows
 			// the title omp sets (`π > <session title>`) when `terminal.integrated.tabs.title`
 			// includes `${sequence}`.
 			shellPath: ompExecutable(),
-			shellArgs: opts.sessionFile ? ["--resume", opts.sessionFile] : [],
+			shellArgs: args,
 			cwd: opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : undefined,
 			env: { [TERMINAL_ENV]: key },
 			iconPath: new vscode.ThemeIcon("sparkle"),
@@ -148,7 +195,8 @@ export class TerminalTracker implements vscode.Disposable {
 				: { viewColumn: vscode.ViewColumn.Active, preserveFocus: opts.preserveFocus },
 		});
 		if (inPanel) terminal.show(opts.preserveFocus);
-		this.track(terminal, key, opts.cwd ?? "", opts.sessionFile);
+		const entry = this.track(terminal, key, opts.cwd ?? "", opts.sessionFile);
+		this.watchForReport(entry);
 		this.save();
 		this.changed.fire();
 		return terminal;
@@ -172,10 +220,25 @@ export class TerminalTracker implements vscode.Disposable {
 		}
 	}
 
+	/** Warns once per window when a launched omp never reports its session. */
+	private watchForReport(entry: Tracked): void {
+		const timer = setTimeout(() => {
+			this.reportTimers.delete(timer);
+			const alive = this.tracked.includes(entry) && entry.terminal.exitStatus === undefined;
+			if (!alive || entry.reported || this.warnedUnreported) return;
+			this.warnedUnreported = true;
+			void vscode.window.showWarningMessage(
+				"omp has not reported its session, so this terminal will not be restored and shows no status. " +
+					`Check that this omp version can load extensions with -e (${this.hookPath}).`,
+			);
+		}, REPORT_TIMEOUT_MS);
+		this.reportTimers.add(timer);
+	}
+
 	private track(terminal: vscode.Terminal, key: string, cwd: string, sessionFile?: string): Tracked {
 		const existing = this.tracked.find((t) => t.terminal === terminal);
 		if (existing) return existing;
-		const entry: Tracked = { key, terminal, cwd, sessionFile };
+		const entry: Tracked = { key, terminal, cwd, sessionFile, reported: false };
 		this.tracked.push(entry);
 		return entry;
 	}
@@ -213,12 +276,19 @@ export class TerminalTracker implements vscode.Disposable {
 			if (terminal) entry = this.track(terminal, key, "");
 		}
 		if (!entry) return;
+		entry.reported = true;
 		const cwd = typeof rec.cwd === "string" ? rec.cwd : entry.cwd;
-		if (entry.sessionFile === rec.sessionFile && entry.cwd === cwd) return;
+		// Hooks older than state reporting write no state; treat those sessions as idle.
+		const state = (rec.state && STATES.includes(rec.state) ? rec.state : "idle") as SessionState;
+		const previous = entry.state;
+		const moved = entry.sessionFile !== rec.sessionFile || entry.cwd !== cwd;
+		if (!moved && previous === state) return;
 		entry.sessionFile = rec.sessionFile;
 		entry.cwd = cwd;
-		this.save();
+		entry.state = state;
+		if (moved) this.save();
 		this.changed.fire();
+		if (previous !== state) this.stateChanged.fire({ sessionFile: rec.sessionFile, terminal: entry.terminal, previous, state });
 	}
 
 	private onClose(terminal: vscode.Terminal): void {
@@ -252,8 +322,11 @@ export class TerminalTracker implements vscode.Disposable {
 		// Pending removals are dropped on purpose: disposal means the window is going away.
 		for (const timer of this.pendingClose.values()) clearTimeout(timer);
 		this.pendingClose.clear();
+		for (const timer of this.reportTimers) clearTimeout(timer);
+		this.reportTimers.clear();
 		this.watcher?.close();
 		for (const d of this.disposables) d.dispose();
 		this.changed.dispose();
+		this.stateChanged.dispose();
 	}
 }

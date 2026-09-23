@@ -52,6 +52,36 @@
         "title": "Refresh",
         "category": "OMP",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "omp.session.openInEditor",
+        "title": "Open in Editor",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.openInPanel",
+        "title": "Open in Panel",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.copyId",
+        "title": "Copy Session ID",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.copyPath",
+        "title": "Copy Session File Path",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.reveal",
+        "title": "Reveal Session File",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.delete",
+        "title": "Delete Session...",
+        "category": "OMP"
       }
     ],
     "menus": {
@@ -66,6 +96,46 @@
           "when": "view == omp.main",
           "group": "navigation@2"
         }
+      ],
+      "webview/context": [
+        {
+          "command": "omp.session.openInEditor",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "group": "1_open@1"
+        },
+        {
+          "command": "omp.session.openInPanel",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "group": "1_open@2"
+        },
+        {
+          "command": "omp.session.copyId",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "omp.session.copyPath",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "omp.session.reveal",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "group": "3_file@1"
+        },
+        {
+          "command": "omp.session.delete",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionOpen",
+          "group": "4_delete@1"
+        }
+      ],
+      "commandPalette": [
+        { "command": "omp.session.openInEditor", "when": "false" },
+        { "command": "omp.session.openInPanel", "when": "false" },
+        { "command": "omp.session.copyId", "when": "false" },
+        { "command": "omp.session.copyPath", "when": "false" },
+        { "command": "omp.session.reveal", "when": "false" },
+        { "command": "omp.session.delete", "when": "false" }
       ]
     },
     "configuration": {
@@ -100,6 +170,11 @@
           "default": 5,
           "minimum": 1,
           "description": "How often the usage view refreshes while visible."
+        },
+        "omp.notifyWhenDone": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when an omp session finishes or asks a question while its terminal tab is not in view."
         }
       }
     }
@@ -107,6 +182,7 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
+    "test": "tsc -p tsconfig.test.json && node --test --require ./out-test/test/setup.js \"out-test/test/*.test.js\"",
     "package": "vsce package --no-dependencies --skip-license --allow-missing-repository"
   },
   "devDependencies": {

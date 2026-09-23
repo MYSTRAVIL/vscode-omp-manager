@@ -38,7 +38,7 @@ interface RawReport {
 	}>;
 }
 
-function parse(stdout: string): UsageProvider[] {
+export function parseUsage(stdout: string): UsageProvider[] {
 	const raw: { reports?: RawReport[] } = JSON.parse(stdout);
 	const providers: UsageProvider[] = [];
 	for (const report of raw.reports ?? []) {
@@ -83,7 +83,7 @@ export class UsageService implements vscode.Disposable {
 				let next: UsageSnapshot;
 				try {
 					if (err) throw err;
-					next = { providers: parse(stdout), fetchedAt: Date.now() };
+					next = { providers: parseUsage(stdout), fetchedAt: Date.now() };
 				} catch (e) {
 					next = {
 						providers: this.snapshot?.providers ?? [],

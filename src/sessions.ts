@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { sessionsDir } from "./config";
+import { normPath, sessionsDir } from "./config";
 
 export interface SessionInfo {
 	id: string;
@@ -21,6 +21,7 @@ interface CacheEntry {
 // follows within a few KB. Title lines are padded so omp can rewrite them in place.
 const HEAD_BYTES = 16 * 1024;
 const FIRST_PROMPT_RE = /"role":"user","content":\[\{"type":"text","text":"((?:[^"\\]|\\.)*)/;
+const DEBOUNCE_MS = 1000;
 
 function readHead(file: string): string {
 	const fd = fs.openSync(file, "r");
@@ -38,7 +39,8 @@ function oneLine(text: string, max = 120): string {
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-function parseSession(file: string, mtimeMs: number): SessionInfo | null {
+/** Title, header, and first prompt from a session file's head; null for empty or foreign files. */
+export function parseSession(file: string, mtimeMs: number): SessionInfo | null {
 	const head = readHead(file);
 	let title = "";
 	let header: { id?: unknown; cwd?: unknown; timestamp?: unknown; title?: unknown } | undefined;
@@ -74,47 +76,117 @@ function parseSession(file: string, mtimeMs: number): SessionInfo | null {
 	};
 }
 
+export interface SessionIndexOptions {
+	root?: string;
+	debounceMs?: number;
+}
+
 /**
- * Index of top-level omp sessions (`<agentDir>/sessions/<bucket>/*.jsonl`).
- * Subagent transcripts live in per-session subdirectories and are skipped.
+ * Index of top-level omp sessions (`<root>/<bucket>/*.jsonl`). Subagent transcripts
+ * live in per-session subdirectories and are skipped.
+ *
+ * The first `list()` scans everything. After that the watcher names each changed
+ * file, and only those are re-read. Every running omp appends to its session about
+ * once a second, so a full rescan per change would cost time proportional to the
+ * whole history on the extension host thread.
  */
 export class SessionIndex implements vscode.Disposable {
-	private cache = new Map<string, CacheEntry>();
+	private readonly root: string;
+	private readonly debounceMs: number;
+	// Keyed by normPath(file).
+	private readonly cache = new Map<string, CacheEntry>();
+	private sorted: SessionInfo[] | undefined;
+	private scanned = false;
+	private readonly pending = new Set<string>();
+	private rescan = false;
 	private watcher: fs.FSWatcher | undefined;
 	private debounce: NodeJS.Timeout | undefined;
 	private readonly changed = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.changed.event;
 
-	constructor() {
+	constructor(opts: SessionIndexOptions = {}) {
+		this.root = opts.root ?? sessionsDir();
+		this.debounceMs = opts.debounceMs ?? DEBOUNCE_MS;
 		this.watch();
 	}
 
 	private watch(): void {
 		try {
-			this.watcher = fs.watch(sessionsDir(), { recursive: true }, (_event, name) => {
-				if (name && !String(name).endsWith(".jsonl")) return;
-				clearTimeout(this.debounce);
-				this.debounce = setTimeout(() => this.changed.fire(), 1000);
+			this.watcher = fs.watch(this.root, { recursive: true }, (_event, name) => this.onFsEvent(name));
+			this.watcher.on("error", () => {
+				this.watcher?.close();
+				this.watcher = undefined;
 			});
-			this.watcher.on("error", () => this.watcher?.close());
 		} catch {
-			// No sessions dir yet; manual refresh still works.
+			// No sessions dir yet; the first list() still scans once it exists.
 		}
 	}
 
-	list(): SessionInfo[] {
-		const root = sessionsDir();
+	private onFsEvent(name: string | Buffer | null): void {
+		if (name === null) {
+			this.rescan = true;
+		} else {
+			const parts = String(name).split(/[\\/]/);
+			// A bucket directory itself changed (created, renamed, deleted): its files may go unreported.
+			if (parts.length === 1) this.rescan = true;
+			else if (parts.length === 2 && parts[1].endsWith(".jsonl")) this.pending.add(path.join(this.root, ...parts));
+			else return;
+		}
+		clearTimeout(this.debounce);
+		this.debounce = setTimeout(() => this.flush(), this.debounceMs);
+	}
+
+	private flush(): void {
+		const files = [...this.pending];
+		this.pending.clear();
+		const rescan = this.rescan;
+		this.rescan = false;
+		// Nothing has been listed yet, so the first list() will scan anyway.
+		if (!this.scanned) return;
+		let dirty = false;
+		if (rescan) dirty = this.scan();
+		else for (const file of files) dirty = this.update(file) || dirty;
+		if (!dirty) return;
+		this.sorted = undefined;
+		this.changed.fire();
+	}
+
+	/** Re-reads one session file. Returns whether the listing changed. */
+	private update(file: string): boolean {
+		const key = normPath(file);
+		let mtimeMs: number;
+		try {
+			mtimeMs = fs.statSync(file).mtimeMs;
+		} catch {
+			return this.cache.delete(key);
+		}
+		const cached = this.cache.get(key);
+		if (cached?.mtimeMs === mtimeMs) return false;
+		let info: SessionInfo | null = null;
+		try {
+			info = parseSession(file, mtimeMs);
+		} catch {
+			// unreadable; retried on the next change
+		}
+		this.cache.set(key, { mtimeMs, info });
+		// An empty session that stays empty does not change what is listed.
+		return !!(info || cached?.info);
+	}
+
+	/** Full scan of every bucket. Returns whether the listing changed. */
+	private scan(): boolean {
+		this.scanned = true;
 		const seen = new Set<string>();
-		const out: SessionInfo[] = [];
+		let dirty = false;
 		let buckets: fs.Dirent[];
 		try {
-			buckets = fs.readdirSync(root, { withFileTypes: true });
+			buckets = fs.readdirSync(this.root, { withFileTypes: true });
 		} catch {
-			return [];
+			buckets = [];
 		}
 		for (const bucket of buckets) {
 			if (!bucket.isDirectory()) continue;
-			const dir = path.join(root, bucket.name);
+			const dir = path.join(this.root, bucket.name);
 			let entries: fs.Dirent[];
 			try {
 				entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -124,29 +196,37 @@ export class SessionIndex implements vscode.Disposable {
 			for (const entry of entries) {
 				if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
 				const file = path.join(dir, entry.name);
-				let mtimeMs: number;
-				try {
-					mtimeMs = fs.statSync(file).mtimeMs;
-				} catch {
-					continue;
-				}
-				seen.add(file);
-				let cached = this.cache.get(file);
-				if (!cached || cached.mtimeMs !== mtimeMs) {
-					let info: SessionInfo | null = null;
-					try {
-						info = parseSession(file, mtimeMs);
-					} catch {
-						// unreadable; retry on next change
-					}
-					cached = { mtimeMs, info };
-					this.cache.set(file, cached);
-				}
-				if (cached.info) out.push(cached.info);
+				seen.add(normPath(file));
+				dirty = this.update(file) || dirty;
 			}
 		}
-		for (const file of this.cache.keys()) if (!seen.has(file)) this.cache.delete(file);
-		return out.sort((a, b) => b.modified - a.modified);
+		for (const key of this.cache.keys()) {
+			if (!seen.has(key)) dirty = this.cache.delete(key) || dirty;
+		}
+		if (!this.watcher) this.watch();
+		return dirty;
+	}
+
+	/** Every listable session, newest first. */
+	list(): SessionInfo[] {
+		if (!this.scanned) this.scan();
+		if (!this.sorted) {
+			this.sorted = [];
+			for (const { info } of this.cache.values()) if (info) this.sorted.push(info);
+			this.sorted.sort((a, b) => b.modified - a.modified);
+		}
+		return this.sorted;
+	}
+
+	/** Metadata for one session file; parses it when it is not indexed (e.g. never listed). */
+	find(file: string): SessionInfo | undefined {
+		const cached = this.cache.get(normPath(file));
+		if (cached) return cached.info ?? undefined;
+		try {
+			return parseSession(file, fs.statSync(file).mtimeMs) ?? undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	dispose(): void {
@@ -154,18 +234,4 @@ export class SessionIndex implements vscode.Disposable {
 		this.watcher?.close();
 		this.changed.dispose();
 	}
-	/** Cached metadata for one session file, parsing it on a miss. */
-	find(file: string): SessionInfo | undefined {
-		const cached = this.cache.get(file);
-		if (cached) return cached.info ?? undefined;
-		try {
-			const mtimeMs = fs.statSync(file).mtimeMs;
-			const info = parseSession(file, mtimeMs);
-			this.cache.set(file, { mtimeMs, info });
-			return info ?? undefined;
-		} catch {
-			return undefined;
-		}
-	}
 }
-

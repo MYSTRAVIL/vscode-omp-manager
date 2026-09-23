@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { isWithin, normPath } from "./config";
 import type { SessionIndex, SessionInfo } from "./sessions";
-import type { TerminalTracker } from "./tracker";
+import type { SessionState, TerminalTracker } from "./tracker";
 import type { UsageService } from "./usage";
 
 const MAX_SESSIONS = 300;
@@ -56,7 +56,11 @@ section.collapsed#sessions .body { display: none; }
 .detail { display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .time { flex: none; font-size: 11px; }
 .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: transparent; }
-.dot.open { background: var(--vscode-testing-iconPassed, #3fb950); }
+.dot.idle { background: var(--vscode-testing-iconPassed, #3fb950); }
+.dot.working { background: var(--vscode-progressBar-background, #0078d4); animation: pulse 1.2s ease-in-out infinite; }
+.dot.waiting { background: var(--vscode-editorWarning-foreground, #cca700); }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .dot.working { animation: none; } }
 .group { font-size: 11px; margin: 10px 4px 4px; }
 .group:first-child { margin-top: 0; }
 `;
@@ -145,26 +149,64 @@ function group(ms) {
 	if (ms >= start - 6 * day) return "This week";
 	return "Older";
 }
+const STATE_LABEL = { idle: "open, idle", working: "open, working", waiting: "open, needs input" };
 function renderSessions() {
 	if (items === null) { list.innerHTML = '<div class="muted">Loading…</div>'; return; }
 	const needle = q.value.trim().toLowerCase();
-	const shown = needle ? items.filter(s => (s.title + " " + s.detail).toLowerCase().includes(needle)) : items;
-	if (!shown.length) { list.innerHTML = '<div class="muted">' + (items.length ? "No matching sessions" : "No sessions yet") + '</div>'; return; }
+	const matched = needle ? items.filter(s => (s.title + " " + s.detail).toLowerCase().includes(needle)) : items;
+	if (!matched.length) { list.innerHTML = '<div class="muted">' + (items.length ? "No matching sessions" : "No sessions yet") + '</div>'; return; }
+	// Open sessions lead in their own group; the rest follow by recency.
+	const shown = matched.filter(s => s.state).concat(matched.filter(s => !s.state));
+	// Live sessions re-render this list about once a second; keep keyboard focus on the same row.
+	const focused = document.activeElement && document.activeElement.classList.contains("item") ? document.activeElement.dataset.file : null;
 	let html = "", last = "";
 	for (const s of shown) {
-		const g = group(s.modified);
+		const g = s.state ? "Open" : group(s.modified);
 		if (g !== last) { html += '<div class="group muted">' + g + '</div>'; last = g; }
-		html += '<button class="item" data-file="' + esc(s.file) + '" title="' + esc(s.title) + (s.open ? " (open)" : "") + '">'
-			+ '<span class="dot' + (s.open ? " open" : "") + '"></span>'
+		const ctx = { webviewSection: "session", file: s.file, id: s.id, sessionOpen: !!s.state, preventDefaultContextMenuItems: true };
+		html += '<button class="item" tabindex="-1" data-file="' + esc(s.file) + '" data-vscode-context="' + esc(JSON.stringify(ctx)) + '"'
+			+ ' title="' + esc(s.title) + (s.state ? " (" + STATE_LABEL[s.state] + ")" : "") + '">'
+			+ '<span class="dot' + (s.state ? " " + s.state : "") + '"></span>'
 			+ '<span class="title">' + esc(s.title) + (s.detail ? '<span class="detail muted">' + esc(s.detail) + '</span>' : "") + '</span>'
 			+ '<span class="time muted">' + ago(s.modified) + '</span></button>';
 	}
 	list.innerHTML = html;
+	const rows = [...list.querySelectorAll(".item")];
+	const again = focused === null ? undefined : rows.find(r => r.dataset.file === focused);
+	// One row is tabbable (roving tabindex); arrows move between rows.
+	(again || rows[0]).tabIndex = 0;
+	if (again) again.focus({ preventScroll: true });
+}
+function focusRow(row) {
+	for (const r of list.querySelectorAll('.item[tabindex="0"]')) r.tabIndex = -1;
+	row.tabIndex = 0;
+	row.focus();
 }
 document.getElementById("new").addEventListener("click", () => vscode.postMessage({ type: "new" }));
 list.addEventListener("click", e => {
 	const el = e.target.closest(".item");
 	if (el) vscode.postMessage({ type: "open", file: el.dataset.file });
+});
+list.addEventListener("keydown", e => {
+	const rows = [...list.querySelectorAll(".item")];
+	const i = rows.indexOf(document.activeElement);
+	if (i < 0) return;
+	let next;
+	if (e.key === "ArrowDown") next = rows[i + 1];
+	else if (e.key === "ArrowUp") next = i > 0 ? rows[i - 1] : q;
+	else if (e.key === "Home") next = rows[0];
+	else if (e.key === "End") next = rows[rows.length - 1];
+	else if (e.key === "Escape") next = q;
+	else return;
+	e.preventDefault();
+	if (next === q) q.focus();
+	else if (next) focusRow(next);
+});
+q.addEventListener("keydown", e => {
+	const first = list.querySelector(".item");
+	if (!first) return;
+	if (e.key === "ArrowDown") { e.preventDefault(); focusRow(first); }
+	else if (e.key === "Enter") { e.preventDefault(); first.click(); }
 });
 q.addEventListener("input", renderSessions);
 
@@ -180,10 +222,12 @@ vscode.postMessage({ type: "ready" });
 
 interface SessionItem {
 	file: string;
+	id: string;
 	title: string;
 	detail: string;
 	modified: number;
-	open: boolean;
+	/** Set only for sessions open in a terminal. */
+	state?: SessionState;
 }
 
 /** Sessions started in (or under) the open workspace folders; all sessions when no folder is open. */
@@ -261,20 +305,24 @@ export class OmpViewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 		this.sessionsDirty = false;
 		const open = this.tracker.openSessions();
 		const folders = vscode.workspace.workspaceFolders ?? [];
-		const items: SessionItem[] = workspaceSessions(this.index)
-			.slice(0, MAX_SESSIONS)
-			.map((s) => {
-				// Sessions from a subfolder (worktrees, scratch dirs) show where they ran.
-				const folder = folders.find((f) => isWithin(s.cwd, f.uri.fsPath));
-				const rel = folder ? path.relative(folder.uri.fsPath, s.cwd) : s.cwd;
-				return { file: s.file, title: s.title, detail: rel, modified: s.modified, open: open.has(normPath(s.file)) };
-			});
+		const items: SessionItem[] = [];
+		for (const s of workspaceSessions(this.index)) {
+			const live = open.get(normPath(s.file));
+			// Open sessions always show, however old.
+			if (items.length >= MAX_SESSIONS && !live) continue;
+			// Sessions from a subfolder (worktrees, scratch dirs) show where they ran.
+			const folder = folders.find((f) => isWithin(s.cwd, f.uri.fsPath));
+			const rel = folder ? path.relative(folder.uri.fsPath, s.cwd) : s.cwd;
+			// The hook reports state shortly after launch; until then an open session shows as idle.
+			const state = live ? (live.state ?? "idle") : undefined;
+			items.push({ file: s.file, id: s.id, title: s.title, detail: rel, modified: s.modified, state });
+		}
 		void this.view.webview.postMessage({ type: "sessions", items });
 	}
 
 	private open(file: string): void {
 		const info = this.index.find(file);
-		this.tracker.open({ sessionFile: file, cwd: info?.cwd });
+		void this.tracker.open({ sessionFile: file, cwd: info?.cwd });
 	}
 
 	dispose(): void {
