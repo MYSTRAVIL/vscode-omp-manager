@@ -4,3 +4,6 @@ out/
 out-test/
 memory/
 .env
+
+# Maintainer-only: tracked on the private source repo, never published here.
+/CLAUDE.md
