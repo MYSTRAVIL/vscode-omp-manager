@@ -57,9 +57,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 	// A session that stops working in a terminal you are not looking at gets a notification.
 	// `activeTerminal` outlives focus moving to a file, so a terminal tab must also be showing.
-	// A panel terminal has no tab and counts as not looked at.
+	// A panel terminal has no tab and counts as not looked at. A question also notifies from
+	// idle: omp ends the turn before it opens a plan review.
 	const notify = ({ sessionFile, terminal, previous, state, workedMs }: StateChange) => {
-		if (previous !== "working" || state === "working") return;
+		if (previous === undefined || state === "working" || (state === "idle" && previous !== "working")) return;
 		const config = vscode.workspace.getConfiguration("omp");
 		if (state === "waiting" ? !config.get<boolean>("notify.onInput", true) : !config.get<boolean>("notify.onFinish", true)) return;
 		// Questions always notify; a quick reply finishing does not.
@@ -108,6 +109,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		vscode.commands.registerCommand("omp.focusNextWaiting", focusNextWaiting),
 		vscode.window.registerWebviewViewProvider("omp.main", view),
 		vscode.commands.registerCommand("omp.newSession", newSession),
+		// The same command with the colored π icon, for the editor tab bar.
+		vscode.commands.registerCommand("omp.newSessionFromEditorTitle", newSession),
 		vscode.commands.registerCommand("omp.refresh", () => {
 			view.refreshSessions(true);
 			return usage.refresh();
@@ -168,4 +171,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	);
 
 	await tracker.start();
+
+	if (vscode.workspace.getConfiguration("omp").get<boolean>("focusOnStartup", true)) {
+		void vscode.commands.executeCommand("workbench.view.extension.omp");
+	}
 }

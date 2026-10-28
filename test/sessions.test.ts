@@ -139,3 +139,27 @@ test("SessionIndex.find parses a file it has not listed without adding it to the
 		index.dispose();
 	}
 });
+
+test("SessionIndex lists symlinked transcripts once and skips symlinked buckets", async (t) => {
+	const root = path.join(tmp, "links");
+	const elsewhere = writeFile(path.join(tmp, "links-target", "moved.jsonl"), sessionLines({ title: "Linked" }));
+	const own = writeFile(path.join(root, "a", "own.jsonl"), sessionLines({ title: "Own" }));
+	try {
+		fs.symlinkSync(elsewhere, path.join(root, "a", "linked.jsonl"), "file");
+	} catch (err) {
+		// Windows needs Developer Mode or admin rights for symlinks.
+		if ((err as NodeJS.ErrnoException).code === "EPERM") return t.skip("symlinks not permitted");
+		throw err;
+	}
+	fs.mkdirSync(path.join(root, "b"));
+	fs.symlinkSync(own, path.join(root, "b", "alias.jsonl"), "file");
+	fs.symlinkSync(path.dirname(elsewhere), path.join(root, "linked-bucket"), "junction");
+	fs.symlinkSync(path.join(tmp, "missing.jsonl"), path.join(root, "b", "broken.jsonl"), "file");
+	const index = new SessionIndex({ root, debounceMs: 50 });
+	try {
+		await index.ensure();
+		assert.deepEqual(index.list().map((s) => s.title).sort(), ["Linked", "Own"]);
+	} finally {
+		index.dispose();
+	}
+});

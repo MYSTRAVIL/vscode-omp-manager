@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- Session transcripts that are symlinks are listed, as omp lists and resumes them. A link to a transcript that is already listed shows once, and a session folder that is itself a symlink is still skipped.
+- The workspace session list also shows sessions from the same folders in the repository's other git worktrees, as omp's resume picker does, so a session moved with `/wt` stays listed.
+- `omp.restoreContinuesTurns` (off by default) restores sessions with `omp --restore`, so a turn that VS Code closing or crashing cut off goes on, with its subagents. Sessions opened by hand still use `--resume`. Needs omp 18.10.3 or later.
+- A session stays working when omp ends a turn it will continue: a goal or todo continuation, a queued steer, or a wait on its background jobs. These no longer show as idle or notify "finished".
+- A session waiting on an interactive plan review shows as needing input and notifies like a question. A question now notifies even when the session was idle, since omp ends the turn before opening the review.
+- A π button in the editor tab bar starts a new session. Hide it by right-clicking the tab bar.
+- Accounts in the usage view collapse: click an account's header. A collapsed account shows its highest usage, and collapse is remembered.
+- The pace marker has dark edges, so it shows on the yellow and red bars too.
+- The OMP sidebar opens at startup instead of Explorer. VS Code restores the last active view per workspace, so new windows and folders would otherwise land on Explorer. Turn it off with `omp.focusOnStartup`.
+- A session keeps its status when omp moves it to a new file, which omp does when another process holds the transcript, and after a branch.
+
 ## 0.2.0
 
 - Usage meters show pacing: a marker where usage would be at an even pace through the window, and how far under or over that pace you are. Toggle with `omp.usage.showPace`.

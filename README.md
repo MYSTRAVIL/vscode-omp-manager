@@ -23,7 +23,7 @@ Each [GitHub release](https://github.com/MYSTRAVIL/vscode-omp-manager/releases) 
 
 ## How it works
 
-The extension launches every omp with `-e <extension>/hook/vscode-session-restore.ts`. That omp extension writes a small record to `<agentDir>/vscode-terminals/` when a session starts or switches, and when the agent starts working, stops, or asks a question. The sidebar reads those records to map terminals to sessions and to show status.
+The extension launches every omp with `-e <extension>/hook/vscode-session-restore.ts`. That omp extension writes a small record to `<agentDir>/vscode-terminals/` when a session starts or switches, and when the agent starts working, stops, asks a question, or opens a plan review. The sidebar reads those records to map terminals to sessions and to show status.
 
 To get status and restore for omp started by hand in a VS Code shell terminal, copy `hook/vscode-session-restore.ts` into your omp extensions directory (`~/.omp/agent/extensions/`). Loading it twice is harmless.
 
@@ -56,6 +56,8 @@ On macOS, use `Cmd` instead of `Ctrl`.
 | `omp.terminalIcon` | `sparkle` | Codicon id for omp terminal tabs. |
 | `omp.terminalColor` | empty | Theme color id for omp terminal tabs, for example `terminal.ansiMagenta`. |
 | `omp.restoreOnStartup` | `always` | Reopen the sessions that were open when VS Code closed: `always`, `ask`, or `never`. |
+| `omp.restoreContinuesTurns` | `false` | Restore with `omp --restore` instead of `--resume`, so a turn that VS Code closing or crashing cut off goes on, with its subagents. Needs omp 18.10.3 or later. |
+| `omp.focusOnStartup` | `true` | Open the OMP sidebar at startup instead of the last active view, such as Explorer. |
 
 ### Usage
 
@@ -73,7 +75,7 @@ On macOS, use `Cmd` instead of `Ctrl`.
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `omp.sessions.scope` | `workspace` | List sessions from the open workspace, or `all`. |
+| `omp.sessions.scope` | `workspace` | List sessions from the open workspace, or `all`. The workspace includes the same folders in other git worktrees of their repositories, as omp's resume picker does. |
 | `omp.sessions.maxShown` | `300` | Most sessions listed. Open sessions always show. |
 | `omp.sessions.showEmpty` | `false` | List sessions that have no prompt yet. |
 | `omp.sessions.sortBy` | `modified` | Sort newest first by `modified` or `created`. |

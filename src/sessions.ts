@@ -93,7 +93,8 @@ export interface SessionIndexOptions {
 
 /**
  * Index of top-level omp sessions (`<root>/<bucket>/*.jsonl`). Subagent transcripts
- * live in per-session subdirectories and are skipped.
+ * live in per-session subdirectories and are skipped. Like omp, a transcript may be a
+ * symlink, but a bucket that is a symlink is not traversed.
  *
  * `ensure()` scans everything once, in chunks, so hundreds of sessions do not block the
  * extension host. After that the watcher names each changed file, and only those are
@@ -102,6 +103,8 @@ export interface SessionIndexOptions {
  */
 export class SessionIndex implements vscode.Disposable {
 	private readonly root: string;
+	/** `root` with links resolved; set on the first symlinked transcript. */
+	private realRoot: string | undefined;
 	private readonly debounceMs: number;
 	// Keyed by normPath(file).
 	private readonly cache = new Map<string, CacheEntry>();
@@ -175,7 +178,9 @@ export class SessionIndex implements vscode.Disposable {
 		const key = normPath(file);
 		let mtimeMs: number;
 		try {
-			mtimeMs = fs.statSync(file).mtimeMs;
+			const stat = fs.statSync(file);
+			if (!stat.isFile() || this.isAlias(file)) return this.cache.delete(key);
+			mtimeMs = stat.mtimeMs;
 		} catch {
 			return this.cache.delete(key);
 		}
@@ -190,6 +195,18 @@ export class SessionIndex implements vscode.Disposable {
 		this.cache.set(key, { mtimeMs, info });
 		// A foreign file that stays foreign does not change what is listed.
 		return !!(info || cached?.info);
+	}
+
+	/**
+	 * A symlink to a transcript in another bucket, which is listed under its own path. omp
+	 * lists such a pair once. Throws when the link is broken.
+	 */
+	private isAlias(file: string): boolean {
+		if (!fs.lstatSync(file).isSymbolicLink()) return false;
+		this.realRoot ??= fs.realpathSync(this.root);
+		const rel = path.relative(this.realRoot, fs.realpathSync(file));
+		const parts = rel.split(path.sep);
+		return parts.length === 2 && parts[0] !== ".." && !path.isAbsolute(rel) && parts[1].endsWith(".jsonl");
 	}
 
 	/** Full scan of every bucket, yielding between chunks. Returns whether the listing changed. */
@@ -213,7 +230,8 @@ export class SessionIndex implements vscode.Disposable {
 				continue;
 			}
 			for (const entry of entries) {
-				if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+				// A symlink's target is checked in update(); omp lists links that resolve to a file.
+				if (!(entry.isFile() || entry.isSymbolicLink()) || !entry.name.endsWith(".jsonl")) continue;
 				const file = path.join(dir, entry.name);
 				seen.add(normPath(file));
 				dirty = this.update(file) || dirty;

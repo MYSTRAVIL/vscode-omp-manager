@@ -5,6 +5,7 @@ import { isWithin, normPath } from "./config";
 import type { SessionIndex, SessionInfo } from "./sessions";
 import type { SessionState, TerminalTracker } from "./tracker";
 import { refreshMinutes, showPace, type UsageService, visibleProviders, warnPercent } from "./usage";
+import { worktreeFolders } from "./worktrees";
 
 // One webview holds both sections. Separate VS Code views split the sidebar height
 // between them and cannot size to content; here usage takes its natural height and
@@ -34,7 +35,10 @@ section.collapsed .chev { transform: rotate(-90deg); }
 section.collapsed#sessions .body { display: none; }
 
 .provider, .group { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
-.provider { margin: 8px 0; }
+.provider { display: flex; align-items: center; gap: 2px; width: 100%; margin: 8px 0; padding: 1px 4px 1px 0; border-radius: 3px; text-align: left; }
+.provider:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.provider .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider.collapsed .chev { transform: rotate(-90deg); }
 .limit { margin: 0 0 12px; }
 .limit:last-child { margin-bottom: 2px; }
 .row { display: flex; justify-content: space-between; margin-bottom: 5px; }
@@ -42,8 +46,8 @@ section.collapsed#sessions .body { display: none; }
 .fill { height: 100%; background: var(--vscode-descriptionForeground); }
 .fill.warn { background: var(--vscode-editorWarning-foreground); }
 .fill.full { background: var(--vscode-errorForeground); }
-/* Where usage would be at an even pace through the window. */
-.mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--vscode-foreground); }
+/* Where usage would be at an even pace through the window. The sidebar-colored edges keep it visible on any fill color. */
+.mark { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--vscode-foreground); box-shadow: 0 0 0 1px var(--vscode-sideBar-background, var(--vscode-editor-background)); }
 .pace { font-size: 11px; margin-right: 6px; }
 .pace.over { color: var(--vscode-editorWarning-foreground); }
 .reset { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 4px; }
@@ -169,7 +173,12 @@ function renderUsage() {
 	if (!usage.providers.length && !usage.error) html += '<div class="muted">No usage data. Log in with omp first.</div>';
 	const now = Date.now();
 	for (const p of usage.providers) {
-		html += '<div class="provider">' + esc(p.name) + '</div>';
+		const collapsed = !!state.providers[p.name];
+		// A collapsed account still shows its highest usage.
+		const top = Math.max(0, ...p.limits.map(l => l.usedPercent));
+		html += '<button class="provider' + (collapsed ? " collapsed" : "") + '" data-provider="' + esc(p.name) + '" aria-expanded="' + !collapsed + '">' + CHEVRON
+			+ '<span class="name">' + esc(p.name) + '</span>' + (collapsed ? '<span class="count">' + top + '%</span>' : "") + '</button>';
+		if (collapsed) continue;
 		for (const l of p.limits) {
 			const cls = l.usedPercent >= 100 || l.status === "exhausted" ? "full" : l.usedPercent >= warnPercent ? "warn" : "";
 			// Matches paceHeadroom in usage.ts.
@@ -190,6 +199,17 @@ function renderUsage() {
 	}
 	usageBody.innerHTML = html;
 }
+// Collapsed accounts by name.
+state.providers = state.providers || {};
+usageBody.addEventListener("click", e => {
+	const head = e.target.closest(".provider");
+	if (!head) return;
+	const name = head.dataset.provider;
+	if (state.providers[name]) delete state.providers[name];
+	else state.providers[name] = true;
+	vscode.setState(state);
+	renderUsage();
+});
 
 const list = document.getElementById("list");
 const q = document.getElementById("q");
@@ -354,13 +374,14 @@ function folderLabel(folder: vscode.WorkspaceFolder | undefined, rel: string, ro
 }
 
 /**
- * The sessions to list: started in or under the open workspace folders (every session with
- * scope "all" or when no folder is open), empty ones only with showEmpty, newest first by sortBy.
+ * The sessions to list: started in or under the open workspace folders or the same folders in
+ * their repositories' other git worktrees (every session with scope "all" or when no folder is
+ * open), empty ones only with showEmpty, newest first by sortBy.
  */
 export function workspaceSessions(index: SessionIndex): SessionInfo[] {
 	const config = vscode.workspace.getConfiguration("omp");
 	const all = config.get<string>("sessions.scope", "workspace") === "all";
-	const folders = all ? [] : (vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? []);
+	const folders = all ? [] : (vscode.workspace.workspaceFolders?.flatMap((f) => worktreeFolders(f.uri.fsPath)) ?? []);
 	const showEmpty = config.get<boolean>("sessions.showEmpty", false);
 	const sessions = index.list().filter((s) => (showEmpty || !s.empty) && (!folders.length || folders.some((f) => isWithin(s.cwd, f))));
 	// The index lists by modified time already.

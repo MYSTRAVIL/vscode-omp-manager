@@ -197,18 +197,20 @@ export class TerminalTracker implements vscode.Disposable {
 		else if (opts.location === "editor") await vscode.commands.executeCommand("workbench.action.terminal.moveToEditor");
 	}
 
-	private launch(opts: LaunchOptions): vscode.Terminal {
+	/** `continueTurn`: open with `--restore`, which also goes on with a turn and subagents the last omp left unfinished. */
+	private launch(opts: LaunchOptions, continueTurn = false): vscode.Terminal {
 		const launchedAt = Date.now();
 		const cfg = vscode.workspace.getConfiguration("omp");
 		const key = crypto.randomUUID();
 		const location = opts.location ?? cfg.get<string>("terminalLocation");
 		const inPanel = location === "panel";
 
-		// Apply extraArgs after the hook, before --resume
+		// Apply extraArgs after the hook, before --resume or --restore
 		const args = ["-e", this.hookPath];
 		const extraArgs = cfg.get<unknown[]>("extraArgs", []);
 		for (const a of extraArgs) if (typeof a === "string") args.push(a);
-		if (opts.sessionFile) args.push("--resume", opts.sessionFile);
+		const reopen = continueTurn ? "--restore" : "--resume";
+		if (opts.sessionFile) args.push(reopen, opts.sessionFile);
 
 		// Merge custom env, but let OMP_VSCODE_TERMINAL always win
 		const env: Record<string, string> = { [TERMINAL_ENV]: key };
@@ -240,7 +242,7 @@ export class TerminalTracker implements vscode.Disposable {
 		if (inPanel) terminal.show(opts.preserveFocus);
 		const entry = this.track(terminal, key, opts.cwd ?? "", opts.sessionFile);
 		entry.launchedAt = launchedAt;
-		this.log.info(`[${key.slice(0, 8)}] ${opts.sessionFile ? `resume ${opts.sessionFile}` : "new session"} in ${inPanel ? "panel" : "editor"}; terminal created ${this.since(entry)}`);
+		this.log.info(`[${key.slice(0, 8)}] ${opts.sessionFile ? `${reopen.slice(2)} ${opts.sessionFile}` : "new session"} in ${inPanel ? "panel" : "editor"}; terminal created ${this.since(entry)}`);
 		void terminal.processId.then((pid) => this.log.info(`[${key.slice(0, 8)}] process ${pid ?? "(none)"} started ${this.since(entry)}`));
 		this.watchForReport(entry);
 		this.save();
@@ -257,11 +259,13 @@ export class TerminalTracker implements vscode.Disposable {
 	// Each restored tab takes focus in turn so it spawns before the next opens.
 	private async restore(sessions: SavedSession[]): Promise<void> {
 		this.restoring = true;
+		// Sessions come back here after VS Code closed or crashed, which can cut a turn off mid-run.
+		const continueTurns = vscode.workspace.getConfiguration("omp").get<boolean>("restoreContinuesTurns", false);
 		try {
 			for (const s of sessions) {
 				// A session may have been opened by hand while the "ask" prompt waited.
 				if (this.openSessions().has(normPath(s.sessionFile))) continue;
-				const terminal = this.launch({ cwd: s.cwd, sessionFile: s.sessionFile });
+				const terminal = this.launch({ cwd: s.cwd, sessionFile: s.sessionFile }, continueTurns);
 				const spawned = await Promise.race([terminal.processId.then(() => true), sleep(SPAWN_WAIT_MS).then(() => false)]);
 				if (!spawned) this.log.warn(`No process ${SPAWN_WAIT_MS}ms after restoring ${s.sessionFile}; restoring the next session`);
 			}

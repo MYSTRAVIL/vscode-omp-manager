@@ -2,7 +2,7 @@
   "name": "omp-manager",
   "displayName": "OMP Session Manager",
   "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "mystravil",
   "license": "MIT",
   "repository": {
@@ -61,6 +61,12 @@
         "title": "New Session",
         "category": "OMP",
         "icon": "$(add)"
+      },
+      {
+        "command": "omp.newSessionFromEditorTitle",
+        "title": "New omp Session",
+        "category": "OMP",
+        "icon": "media/omp-new-session.svg"
       },
       {
         "command": "omp.resumeSession",
@@ -139,6 +145,12 @@
           "group": "navigation@2"
         }
       ],
+      "editor/title": [
+        {
+          "command": "omp.newSessionFromEditorTitle",
+          "group": "navigation@-1"
+        }
+      ],
       "webview/context": [
         {
           "command": "omp.session.openInEditor",
@@ -172,6 +184,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "omp.newSessionFromEditorTitle",
+          "when": "false"
+        },
         {
           "command": "omp.session.openInEditor",
           "when": "false"
@@ -277,6 +293,16 @@
             ],
             "default": "always",
             "description": "Reopen the omp sessions that were open when VS Code closed, in the same order."
+          },
+          "omp.restoreContinuesTurns": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Reopen restored sessions with `omp --restore` instead of `--resume`, so a turn that VS Code closing or crashing cut off goes on, with its subagents. Sessions with nothing unfinished resume as usual. Sessions you open by hand always use `--resume`. Needs omp 18.10.3 or later."
+          },
+          "omp.focusOnStartup": {
+            "type": "boolean",
+            "default": true,
+            "description": "Open the OMP sidebar when VS Code starts. VS Code otherwise restores the last active view, so new windows and folders open on Explorer."
           }
         }
       },
@@ -355,7 +381,7 @@
               "all"
             ],
             "enumDescriptions": [
-              "Sessions started in or under the open workspace folders. All sessions when no folder is open.",
+              "Sessions started in or under the open workspace folders, or the same folders in other git worktrees of their repositories. All sessions when no folder is open.",
               "Every omp session."
             ],
             "default": "workspace",
