@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Pin sessions above Open and history through the context menu. Bookmarks persist by session ID, synchronize across windows using the same agent directory, and remain removable when their transcript is unavailable.
+- Add optional Recent history for folder grouping, attention-first sorting, status backgrounds, comfortable card spacing, and theme-customizable session colors. Existing grouping, compact spacing, time ordering, and dot status remain the defaults.
+- Frame the session in VS Code's active or most recently focused terminal, including editor and panel terminals. Track unread working-to-idle completions per workspace; acknowledge only through explicit extension Open/Show or Mark as Read, never through inferred tab focus or restoration.
+- Show only the project beneath session titles in Pinned, Open, and Recent; keep status in tooltips and accessible labels.
+- Preserve clicks and keyboard focus during sidebar updates. Pin/unpin refreshes immediately, including after native context menus; current-only updates do not replace session rows.
+- Add a sidebar shortcut to the extension settings. Presentation settings apply without reloading.
+
 ## 0.3.0
 
 - Session transcripts that are symlinks are listed, as omp lists and resumes them. A link to a transcript that is already listed shows once, and a session folder that is itself a symlink is still skipped.

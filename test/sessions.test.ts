@@ -1,4 +1,5 @@
 import assert = require("node:assert/strict");
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -75,7 +76,14 @@ function nextChange(index: SessionIndex): Promise<void> {
 	});
 }
 
-test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcripts", async () => {
+test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcripts", async (t) => {
+	// Drive the OS event boundary deterministically; native watcher startup can coalesce
+	// immediate fixture writes on macOS. File parsing and index updates remain real.
+	let notify!: (event: string, file: string) => void;
+	t.mock.method(fs, "watch", (...args: unknown[]) => {
+		notify = args[args.length - 1] as typeof notify;
+		return Object.assign(new EventEmitter(), { close() {} }) as fs.FSWatcher;
+	});
 	const root = path.join(tmp, "index");
 	const bucket = path.join(root, "-work-proj");
 	const a = writeFile(path.join(bucket, "a.jsonl"), sessionLines({ title: "A" }));
@@ -92,6 +100,8 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 		writeFile(path.join(bucket, "a", "sub.jsonl"), sessionLines({ title: "Subagent" }));
 		const b = writeFile(path.join(bucket, "b.jsonl"), sessionLines({ title: "B" }));
 		fs.utimesSync(b, new Date(), new Date(Date.now() + 60_000));
+		notify("rename", "-work-proj/a/sub.jsonl");
+		notify("rename", "-work-proj/b.jsonl");
 		await change;
 		assert.deepEqual(
 			index.list().map((s) => s.title),
@@ -102,6 +112,7 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 		change = nextChange(index);
 		fs.writeFileSync(a, sessionLines({ title: "A renamed" }));
 		fs.utimesSync(a, new Date(), new Date(Date.now() + 120_000));
+		notify("change", "-work-proj/a.jsonl");
 		await change;
 		assert.deepEqual(
 			index.list().map((s) => s.title),
@@ -110,6 +121,7 @@ test("SessionIndex follows adds, edits, and deletes, ignoring subagent transcrip
 
 		change = nextChange(index);
 		fs.rmSync(b);
+		notify("rename", "-work-proj/b.jsonl");
 		await change;
 		assert.deepEqual(
 			index.list().map((s) => s.title),
