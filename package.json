@@ -37,6 +37,38 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "colors": [
+      {
+        "id": "omp.session.workingBackground",
+        "description": "Background of working session rows when background status is enabled.",
+        "defaults": { "dark": "#ffe396", "light": "#ffe396", "highContrast": "#473a00", "highContrastLight": "#fff0b3" }
+      },
+      {
+        "id": "omp.session.waitingBackground",
+        "description": "Background of session rows needing input when background status is enabled.",
+        "defaults": { "dark": "#b798ed", "light": "#b798ed", "highContrast": "#382350", "highContrastLight": "#e9d9ff" }
+      },
+      {
+        "id": "omp.session.unreadBackground",
+        "description": "Background of completed session rows not yet viewed when background status is enabled.",
+        "defaults": { "dark": "#79cc85", "light": "#79cc85", "highContrast": "#153e20", "highContrastLight": "#c8f5ce" }
+      },
+      {
+        "id": "omp.session.statusForeground",
+        "description": "Text on session status backgrounds.",
+        "defaults": { "dark": "#1f2328", "light": "#1f2328", "highContrast": "#ffffff", "highContrastLight": "#000000" }
+      },
+      {
+        "id": "omp.session.statusDescriptionForeground",
+        "description": "Project and timestamp text on session status backgrounds.",
+        "defaults": { "dark": "#303a44", "light": "#303a44", "highContrast": "#ffffff", "highContrastLight": "#000000" }
+      },
+      {
+        "id": "omp.session.currentBorder",
+        "description": "Inset border of the session in the active or most recently focused terminal.",
+        "defaults": { "dark": "focusBorder", "light": "focusBorder", "highContrast": "focusBorder", "highContrastLight": "focusBorder" }
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -78,6 +110,27 @@
         "title": "Refresh",
         "category": "OMP",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "omp.settings",
+        "title": "Settings",
+        "category": "OMP",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "omp.session.pin",
+        "title": "Pin Session",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.unpin",
+        "title": "Unpin Session",
+        "category": "OMP"
+      },
+      {
+        "command": "omp.session.markRead",
+        "title": "Mark as Read",
+        "category": "OMP"
       },
       {
         "command": "omp.session.openInEditor",
@@ -143,6 +196,11 @@
           "command": "omp.refresh",
           "when": "view == omp.main",
           "group": "navigation@2"
+        },
+        {
+          "command": "omp.settings",
+          "when": "view == omp.main",
+          "group": "navigation@3"
         }
       ],
       "editor/title": [
@@ -154,17 +212,32 @@
       "webview/context": [
         {
           "command": "omp.session.openInEditor",
-          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionMissing",
           "group": "1_open@1"
         },
         {
           "command": "omp.session.openInPanel",
-          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionMissing",
           "group": "1_open@2"
         },
         {
+          "command": "omp.session.markRead",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && sessionUnread",
+          "group": "1_open@3"
+        },
+        {
+          "command": "omp.session.pin",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionPinned && !sessionMissing && sessionHasIdentity",
+          "group": "1_pin@1"
+        },
+        {
+          "command": "omp.session.unpin",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && sessionPinned",
+          "group": "1_pin@2"
+        },
+        {
           "command": "omp.session.copyId",
-          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && sessionHasIdentity",
           "group": "2_copy@1"
         },
         {
@@ -174,16 +247,28 @@
         },
         {
           "command": "omp.session.reveal",
-          "when": "webviewId == 'omp.main' && webviewSection == 'session'",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionMissing",
           "group": "3_file@1"
         },
         {
           "command": "omp.session.delete",
-          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionOpen",
+          "when": "webviewId == 'omp.main' && webviewSection == 'session' && !sessionOpen && !sessionMissing",
           "group": "4_delete@1"
         }
       ],
       "commandPalette": [
+        {
+          "command": "omp.session.pin",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.unpin",
+          "when": "false"
+        },
+        {
+          "command": "omp.session.markRead",
+          "when": "false"
+        },
         {
           "command": "omp.newSessionFromEditorTitle",
           "when": "false"
@@ -391,7 +476,7 @@
             "type": "number",
             "default": 300,
             "minimum": 1,
-            "description": "Most sessions the sidebar lists. Open sessions always show."
+            "description": "Most history sessions the sidebar lists. Open and pinned sessions always show."
           },
           "omp.sessions.showEmpty": {
             "type": "boolean",
@@ -421,6 +506,41 @@
             ],
             "default": "date",
             "description": "How the session list is grouped."
+          },
+          "omp.sessions.recentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "scope": "window",
+            "description": "Number of recent closed, unpinned sessions shown before folder groups. Only applies when grouping by folder; 0 disables Recent."
+          },
+          "omp.sessions.sortOrder": {
+            "type": "string",
+            "enum": ["time", "attention"],
+            "default": "time",
+            "scope": "window",
+            "enumDescriptions": ["Newest first within each section.", "Needs input, completed but not viewed, working, then other sessions; newest first within each status."],
+            "description": "How sessions are ordered within sections. Open sessions still lead in a flat list."
+          },
+          "omp.sessions.statusStyle": {
+            "type": "string",
+            "enum": ["dot", "background"],
+            "default": "dot",
+            "scope": "window",
+            "description": "Show session status with a dot or a colored row background."
+          },
+          "omp.sessions.highlightCurrent": {
+            "type": "boolean",
+            "default": true,
+            "scope": "window",
+            "description": "Outline the session in the active or most recently focused terminal, in the editor or panel, including while editing normal files."
+          },
+          "omp.sessions.density": {
+            "type": "string",
+            "enum": ["compact", "comfortable"],
+            "default": "compact",
+            "scope": "window",
+            "description": "Spacing between session rows."
           }
         }
       },

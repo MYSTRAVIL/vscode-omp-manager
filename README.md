@@ -7,8 +7,10 @@ A VS Code sidebar for [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`), t
 - **Usage limits.** Shows the output of `omp usage` per provider, with a countdown and the local reset time. Optional status bar item and a warning when a limit gets close.
 - **Session history.** Lists your omp sessions for the current workspace, or all of them, grouped by date or folder. Groups collapse, and a folder group's `+` starts a new session there. Click a session to resume it in a terminal.
 - **Live status.** Each open session shows whether it is idle, working, or waiting on your answer. Notifies you, in VS Code or through the OS, when a background session finishes or asks a question.
+- **Pinned sessions.** Keep sessions you want to return to above Open and history. Right-click to pin or unpin; bookmarks survive restarts and are shared by windows using the same agent directory.
+- **Attention and selection.** An optional attention-first order and colored backgrounds distinguish sessions waiting for you, unread completions, and work in progress. A frame follows VS Code's active or most recently focused terminal, in the editor or panel.
 - **Restore on startup.** Reopens the omp sessions that were open when VS Code closed, in the same tab order. Can ask first.
-- **Context menu.** Open in editor or panel, copy the session id or file path, reveal the session file, delete a closed session.
+- **Context menu.** Pin or unpin, mark an unread session as read, open in editor or panel, copy the session id or file path, reveal the session file, delete a closed session.
 
 ## Requirements
 
@@ -76,10 +78,58 @@ On macOS, use `Cmd` instead of `Ctrl`.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `omp.sessions.scope` | `workspace` | List sessions from the open workspace, or `all`. The workspace includes the same folders in other git worktrees of their repositories, as omp's resume picker does. |
-| `omp.sessions.maxShown` | `300` | Most sessions listed. Open sessions always show. |
+| `omp.sessions.maxShown` | `300` | Most history sessions listed. Open and pinned sessions always show and do not consume this limit. |
 | `omp.sessions.showEmpty` | `false` | List sessions that have no prompt yet. |
 | `omp.sessions.sortBy` | `modified` | Sort newest first by `modified` or `created`. |
-| `omp.sessions.groupBy` | `date` | Group the list by `date`, by `folder`, or not at all (`none`). Open sessions always come first. |
+| `omp.sessions.groupBy` | `date` | Group history by `date`, by `folder`, or not at all (`none`). Pinned comes first when used, followed by Open and history. |
+| `omp.sessions.recentCount` | `0` | In folder grouping, put this many recent, closed, unpinned sessions above project groups. `0` disables Recent. |
+| `omp.sessions.sortOrder` | `time` | `time` keeps newest-first order. `attention` prioritizes waiting, unread completions, working, then other states within each section; each status remains newest-first. |
+| `omp.sessions.statusStyle` | `dot` | Show status with a `dot`, or use a colored `background`. |
+| `omp.sessions.highlightCurrent` | `true` | Frame the session in VS Code's active or most recently focused terminal. The frame can remain while a text editor has focus. |
+| `omp.sessions.density` | `compact` | `compact` keeps the original spacing; `comfortable` gives cards 8px padding. |
+
+Use the sidebar's settings button to open these controls. Presentation changes apply immediately, without restarting the extension. Open, Recent, and Pinned show only the project name beneath each title. Status is available in the tooltip and accessible label, not an extra line on each card.
+
+Pinned sessions are identified by their transcript's session ID. Moving a transcript within the session index keeps its bookmark; branching to a different session ID does not inherit it. Missing bookmarks remain visible and can be unpinned. Pinning does not copy or modify transcripts. Records live in `<agentDir>/vscode-pins/`, not in synced settings.
+
+An unread completion requires a working-to-idle transition of the same session, even if that terminal is active. Opening the session through the extension, choosing **Show** in its notification, or choosing **Mark as Read** acknowledges it. Normal terminal-tab switching, startup restoration, and background refreshes never acknowledge completion. A waiting session stays waiting until omp reports another state. Unread state is saved per workspace.
+
+The active-terminal frame and unread acknowledgement are independent: the frame does not assert that a completion has been read. No editor-tab-to-terminal association is inferred. A notification's **Show** action only reveals its original still-open terminal; stale notifications neither acknowledge a session nor start a new terminal.
+
+### Session colors
+
+Colors follow the VS Code theme and can be overridden in `workbench.colorCustomizations`:
+
+| Color | Purpose |
+| --- | --- |
+| `omp.session.workingBackground` | Background while working. |
+| `omp.session.waitingBackground` | Background while waiting for input. |
+| `omp.session.unreadBackground` | Background after an unread completion. |
+| `omp.session.statusForeground` | Text on status backgrounds. |
+| `omp.session.statusDescriptionForeground` | Project and time text on status backgrounds. |
+| `omp.session.currentBorder` | Current-session frame. |
+
+For a folder-based, attention-first list with spacious colored cards:
+
+```json
+{
+  "omp.sessions.groupBy": "folder",
+  "omp.sessions.recentCount": 10,
+  "omp.sessions.sortOrder": "attention",
+  "omp.sessions.statusStyle": "background",
+  "omp.sessions.density": "comfortable",
+  "workbench.colorCustomizations": {
+    "omp.session.workingBackground": "#ffe396",
+    "omp.session.waitingBackground": "#b798ed",
+    "omp.session.unreadBackground": "#79cc85",
+    "omp.session.statusForeground": "#1f2328",
+    "omp.session.statusDescriptionForeground": "#303a44",
+    "omp.session.currentBorder": "#2459b3"
+  }
+}
+```
+
+This change does not combine live terminal ownership between windows: Open still represents this window. Shared bookmarks are independent of that behavior.
 
 ### Notifications
 

@@ -2,7 +2,7 @@
 // which only exists inside the extension host. Covers what the tested modules touch.
 import Module = require("node:module");
 
-class EventEmitter<T> {
+export class EventEmitter<T> {
 	private listeners: Array<(e: T) => void> = [];
 	readonly event = (listener: (e: T) => void) => {
 		this.listeners.push(listener);
@@ -16,7 +16,7 @@ class EventEmitter<T> {
 	}
 }
 
-const stub = {
+export const stub = {
 	EventEmitter,
 	workspace: { getConfiguration: () => ({ get: <V>(_key: string, fallback?: V) => fallback }) },
 };
