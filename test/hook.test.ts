@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { after, beforeEach, test } from "node:test";
 import type { SessionStateV1 } from "@mystravil/omp-session-core";
-import { emit, pi, publish } from "./fake-core";
+import { emit, pi, publish, publishedEarlier } from "./fake-core";
 import hook from "../hook/vscode-session-restore";
 
 const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-hook-"));
@@ -60,6 +60,14 @@ test("reports busy as working, and any wait on the user as waiting", () => {
 	assert.equal(record()?.state, "waiting");
 	publish(session({ status: "idle" }));
 	assert.equal(record()?.state, "idle");
+});
+
+test("writes the first state at session start when another copy of the core published it before the hook subscribed", () => {
+	publishedEarlier(session());
+	assert.equal(record(), undefined);
+	emit("session_start");
+	assert.equal(record()?.state, "idle");
+	assert.equal(record()?.sessionId, "sid");
 });
 
 test("keys omp started by hand in a shell terminal by its pid", () => {

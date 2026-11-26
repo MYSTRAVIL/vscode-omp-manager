@@ -55,9 +55,9 @@ function stateOf(state: SessionStateV1): SessionState {
 	return state.status === "busy" ? "working" : "idle";
 }
 
-function write(state: SessionStateV1): void {
+function write(state: SessionStateV1 | undefined): void {
 	const target = targetOf(state);
-	if (!target) return;
+	if (!state || !target) return;
 	const { file, terminal } = target;
 	const record = {
 		terminalId: terminal.vscodeTerminal,
@@ -147,8 +147,12 @@ function safely(fn: () => void): void {
 }
 
 export default function (pi: OmpExtensionApi): void {
-	// First, so the core's state is current inside this file's own handler.
+	// First, so the core's state is current inside this file's own handlers.
 	const core = startSessionCore(pi);
 	core.onState((state) => safely(() => write(state)));
+	// omp loads extensions concurrently and starts the session in those already loaded. When
+	// another extension's copy of the core publishes the first state before this file
+	// subscribes, this file's own session_start, which omp still sends it, writes that state.
+	pi.on("session_start", () => safely(() => write(core.state())));
 	pi.on("session_shutdown", () => safely(() => forget(core.state())));
 }

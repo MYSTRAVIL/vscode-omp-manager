@@ -40,6 +40,11 @@ export function publish(state: Omit<SessionStateV1, "v" | "at">): void {
 	for (const listener of listeners) listener(current);
 }
 
+/** Sets the provider's state without notifying: another copy of the core published it before the hook subscribed. */
+export function publishedEarlier(state: Omit<SessionStateV1, "v" | "at">): void {
+	current = { v: 1, at: Date.now(), ...state };
+}
+
 /** Runs omp's handlers for `event`. */
 export function emit(event: string, payload: unknown = {}): void {
 	for (const handler of handlers.get(event) ?? []) handler(payload, {});

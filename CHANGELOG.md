@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- A session reports its status as soon as omp starts, also when another omp extension built on omp-session-core loads first. In 0.6.0 such a session showed no status until its first prompt, and VS Code warned that omp had not reported its session.
+
 ## 0.6.0
 
 - The omp hook now runs on [omp-session-core](https://github.com/MYSTRAVIL/omp-session-core), which other omp extensions share, and ships as one bundled file, `out/hook/vscode-session-restore.js`. If you copied `hook/vscode-session-restore.ts` into your omp extensions directory, replace it with that file.
