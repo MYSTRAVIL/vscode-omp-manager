@@ -14,6 +14,11 @@ export interface SessionInfo {
 	empty: boolean;
 	created: number;
 	modified: number;
+	/**
+	 * Id of the session this file continues (header `continuationOf`, omp 18.13.2+): omp
+	 * moved the conversation here because another process held or rewrote the old file.
+	 */
+	continuationOf?: string;
 }
 
 interface CacheEntry {
@@ -51,7 +56,7 @@ function oneLine(text: string, max = 120): string {
 export function parseSession(file: string, mtimeMs: number): SessionInfo | null {
 	const head = readHead(file);
 	let title = "";
-	let header: { id?: unknown; cwd?: unknown; timestamp?: unknown; title?: unknown } | undefined;
+	let header: { id?: unknown; cwd?: unknown; timestamp?: unknown; title?: unknown; continuationOf?: unknown } | undefined;
 	for (const line of head.split("\n", 3)) {
 		try {
 			const entry = JSON.parse(line);
@@ -83,6 +88,7 @@ export function parseSession(file: string, mtimeMs: number): SessionInfo | null 
 		empty: !title,
 		created: Number.isFinite(created) ? created : mtimeMs,
 		modified: mtimeMs,
+		...(typeof header.continuationOf === "string" ? { continuationOf: header.continuationOf } : {}),
 	};
 }
 
@@ -273,6 +279,36 @@ export class SessionIndex implements vscode.Disposable {
 		} catch {
 			return undefined;
 		}
+	}
+
+	/**
+	 * The copies `file`'s conversation went on in: files in its bucket whose `continuationOf`
+	 * chain leads back to it, most recently modified first. `--resume <file>` on omp 18.13.2+
+	 * opens the newest of them instead of `file`. Uses the listing; await `ensure()` first.
+	 */
+	continuations(file: string): SessionInfo[] {
+		const start = this.find(file);
+		if (!start) return [];
+		const bucket = normPath(path.dirname(file));
+		const byParent = new Map<string, SessionInfo[]>();
+		for (const s of this.list()) {
+			if (!s.continuationOf || normPath(path.dirname(s.file)) !== bucket) continue;
+			const siblings = byParent.get(s.continuationOf);
+			if (siblings) siblings.push(s);
+			else byParent.set(s.continuationOf, [s]);
+		}
+		const copies: SessionInfo[] = [];
+		const seen = new Set([normPath(file)]);
+		const ids = [start.id];
+		for (let i = 0; i < ids.length; i++) {
+			for (const copy of byParent.get(ids[i]) ?? []) {
+				if (seen.has(normPath(copy.file))) continue;
+				seen.add(normPath(copy.file));
+				copies.push(copy);
+				ids.push(copy.id);
+			}
+		}
+		return copies.sort((a, b) => b.modified - a.modified);
 	}
 
 	dispose(): void {

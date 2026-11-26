@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.0
+
+- The omp hook now runs on [omp-session-core](https://github.com/MYSTRAVIL/omp-session-core), which other omp extensions share, and ships as one bundled file, `out/hook/vscode-session-restore.js`. If you copied `hook/vscode-session-restore.ts` into your omp extensions directory, replace it with that file.
+- A session waiting on its background jobs, such as async subagents, shows as idle and notifies "finished", because it takes input meanwhile. It shows as working again when a job's result starts the next turn. Until now it stayed working.
+- A session waiting on a tool approval shows as needing input and notifies like a question.
+- This release also ships the changes of 0.4.0 and 0.5.0, which were not published. Their sections in this changelog list them.
+
+## 0.5.0
+
+- Focus requests: another program on the same machine, such as a dashboard of your sessions, can bring a session's terminal to the front. The window that runs the session shows the terminal and takes the keyboard focus, and when VS Code is in the background it raises its own window. The handler file announces support with `focusRequests`, and the README section "Focus requests" describes the files.
+
+## 0.4.0
+
+- Launch requests: another program on the same machine, such as omp-remote, can start omp in the window that has the project folder open, or in a new window it opens for the purpose. The README section "Launch requests" describes the files.
+- A window opened for a launch request closes when its last omp session ends. Other windows never close. Turn it off with `omp.closeLaunchedWindow`.
+- A session waiting on its background jobs shows as idle once the wait ends without a new turn: Esc, `/jobs kill`, or `/clear`. Needs omp 18.21 or later, which reports these to extensions.
+- The usage view heads each Claude account with its plan, such as "Claude Max 20x", so accounts on different plans no longer look alike (omp 19 and later).
+- Opening an old copy of a session focuses the terminal that runs the copy the conversation moved to. omp 18.13.2 and later resume the newest copy anyway, so a second terminal would run the same conversation.
+- Deleting a session that an omp in another window or terminal is running is refused (omp 18.14.1 and later).
+- Opening a session that an omp in another window or terminal is running asks first, because omp would fork it into a new session file. Cancel leaves it alone; "Open a fork" resumes it as before (omp 18.14.1 and later).
+
 ## 0.3.0
 
 - Session transcripts that are symlinks are listed, as omp lists and resumes them. A link to a transcript that is already listed shows once, and a session folder that is itself a symlink is still skipped.

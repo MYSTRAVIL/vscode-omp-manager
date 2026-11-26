@@ -19,6 +19,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # `vsce package` runs `vscode:prepublish`, which bundles the omp hook with Bun.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - run: npm ci
       - name: Check the tag matches package.json
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"

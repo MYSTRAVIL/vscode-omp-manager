@@ -72,9 +72,11 @@ export function formatCountdown(ms: number): string {
 	return `${min}m`;
 }
 
-// Subset of `omp usage --json`. Account metadata (email, ids) is ignored on purpose.
+// Subset of `omp usage --json`. Of the account metadata only the plan is read; email and ids
+// are ignored on purpose.
 interface RawReport {
 	provider?: string;
+	metadata?: { subscriptionPlan?: unknown };
 	limits?: Array<{
 		label?: string;
 		window?: { label?: string; resetsAt?: number; durationMs?: number };
@@ -88,7 +90,10 @@ export function parseUsage(stdout: string): UsageProvider[] {
 	const providers: UsageProvider[] = [];
 	for (const report of raw.reports ?? []) {
 		const id = report.provider ?? "unknown";
-		const name = PROVIDER_NAMES[id] ?? id;
+		const base = PROVIDER_NAMES[id] ?? id;
+		// omp 19+ names a Claude account's plan ("Max 20x"), which tells two accounts apart.
+		const plan = report.metadata?.subscriptionPlan;
+		const name = typeof plan === "string" && plan.trim() ? `${base} ${plan.trim()}` : base;
 		const limits: UsageLimit[] = [];
 		for (const l of report.limits ?? []) {
 			const a = l.amount ?? {};
@@ -100,8 +105,8 @@ export function parseUsage(stdout: string): UsageProvider[] {
 						: 0;
 			const label = l.label ?? l.window?.label ?? "Limit";
 			limits.push({
-				// "Claude 5 Hour" under a "Claude" heading reads as "5 Hour".
-				label: label.startsWith(`${name} `) ? label.slice(name.length + 1) : label,
+				// "Claude 5 Hour" under a "Claude Max 20x" heading reads as "5 Hour".
+				label: label.startsWith(`${base} `) ? label.slice(base.length + 1) : label,
 				usedPercent: Math.round(Math.min(Math.max(fraction, 0), 1) * 100),
 				resetsAt: l.window?.resetsAt,
 				windowMs: l.window?.durationMs,

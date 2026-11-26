@@ -19,6 +19,11 @@ class EventEmitter<T> {
 const stub = {
 	EventEmitter,
 	workspace: { getConfiguration: () => ({ get: <V>(_key: string, fallback?: V) => fallback }) },
+	// Tests replace showWarningMessage to answer prompts.
+	window: {
+		createOutputChannel: () => ({ info() {}, warn() {}, dispose() {} }),
+		showWarningMessage: async (): Promise<string | undefined> => undefined,
+	},
 };
 
 const loader = Module as unknown as { _load(request: string, ...rest: unknown[]): unknown };

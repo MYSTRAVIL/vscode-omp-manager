@@ -1,4 +1,5 @@
 src/**
+hook/**
 node_modules/**
 **/*.map
 tsconfig.json

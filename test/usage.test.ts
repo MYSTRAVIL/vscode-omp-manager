@@ -31,6 +31,33 @@ test("reads used fraction, reset time, and status per limit, grouped by provider
 	]);
 });
 
+test("heads a Claude account with its plan from omp 19's report metadata", () => {
+	// Shape of a real `omp usage --json --redact` report on omp 19.0.1.
+	const report = {
+		provider: "anthropic",
+		metadata: { email: "my*", credentialId: 7, subscriptionPlan: "Max 20x" },
+		limits: [
+			{
+				id: "anthropic:7d",
+				label: "Claude 7 Day",
+				window: { id: "7d", label: "7 Day", durationMs: 604800000, resetsAt: 1795161600000 },
+				amount: { used: 96, limit: 100, usedFraction: 0.96, unit: "percent" },
+				status: "warning",
+			},
+		],
+	};
+	const [withPlan, blankPlan, noMetadata] = parseUsage(
+		JSON.stringify({
+			reports: [report, { ...report, metadata: { subscriptionPlan: " " } }, { provider: "anthropic", limits: report.limits }],
+		}),
+	);
+	assert.equal(withPlan.name, "Claude Max 20x");
+	assert.deepEqual(withPlan.limits[0], { label: "7 Day", usedPercent: 96, resetsAt: 1795161600000, windowMs: 604800000, status: "warning" });
+	assert.equal(blankPlan.name, "Claude");
+	assert.equal(noMetadata.name, "Claude");
+	assert.equal(noMetadata.limits[0].label, "7 Day");
+});
+
 test("clamps percentages to 0-100 and survives a zero limit", () => {
 	const [p] = parseUsage(
 		JSON.stringify({

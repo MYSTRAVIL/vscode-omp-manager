@@ -9,7 +9,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omp-sessions-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 let n = 0;
-function sessionLines(opts: { title?: string; headerTitle?: string; prompt?: string; id?: string }): string {
+function sessionLines(opts: { title?: string; headerTitle?: string; prompt?: string; id?: string; continuationOf?: string }): string {
 	const lines = [
 		JSON.stringify({ type: "title", v: 1, title: opts.title ?? "", pad: " ".repeat(40) }),
 		JSON.stringify({
@@ -18,6 +18,7 @@ function sessionLines(opts: { title?: string; headerTitle?: string; prompt?: str
 			cwd: "C:\\work\\proj",
 			timestamp: "2026-09-23T01:18:39.373Z",
 			...(opts.headerTitle ? { title: opts.headerTitle } : {}),
+			...(opts.continuationOf ? { continuationOf: opts.continuationOf } : {}),
 		}),
 	];
 	if (opts.prompt !== undefined) {
@@ -135,6 +136,37 @@ test("SessionIndex.find parses a file it has not listed without adding it to the
 			index.list().map((s) => s.title),
 			["Listed"],
 		);
+	} finally {
+		index.dispose();
+	}
+});
+
+test("SessionIndex.continuations follows continuationOf links within the bucket, newest first", async () => {
+	const root = path.join(tmp, "continuations");
+	const at = (file: string, seconds: number) => {
+		fs.utimesSync(file, seconds, seconds);
+		return file;
+	};
+	const original = at(writeFile(path.join(root, "a", "1_orig.jsonl"), sessionLines({ id: "orig", title: "T" })), 1000);
+	const moved = at(writeFile(path.join(root, "a", "2_moved.jsonl"), sessionLines({ id: "moved", title: "T", continuationOf: "orig" })), 2000);
+	const movedAgain = at(writeFile(path.join(root, "a", "3_again.jsonl"), sessionLines({ id: "again", title: "T", continuationOf: "moved" })), 3000);
+	// A fork is a new conversation, and a link in another bucket is another project's.
+	writeFile(path.join(root, "a", "4_fork.jsonl"), sessionLines({ id: "fork", title: "T", prompt: "x" }));
+	writeFile(path.join(root, "b", "5_other.jsonl"), sessionLines({ id: "other", title: "T", continuationOf: "orig" }));
+	const index = new SessionIndex({ root, debounceMs: 50 });
+	try {
+		await index.ensure();
+		assert.equal(index.find(moved)?.continuationOf, "orig");
+		assert.equal(index.find(original)?.continuationOf, undefined);
+		assert.deepEqual(
+			index.continuations(original).map((s) => s.file),
+			[movedAgain, moved],
+		);
+		assert.deepEqual(
+			index.continuations(moved).map((s) => s.file),
+			[movedAgain],
+		);
+		assert.deepEqual(index.continuations(movedAgain), []);
 	} finally {
 		index.dispose();
 	}

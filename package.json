@@ -2,7 +2,7 @@
   "name": "omp-manager",
   "displayName": "OMP Session Manager",
   "description": "Oh My Pi sidebar: usage limits, session history, one-click resume, and terminal restore across VS Code restarts.",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "publisher": "mystravil",
   "license": "MIT",
   "repository": {
@@ -303,6 +303,11 @@
             "type": "boolean",
             "default": true,
             "description": "Open the OMP sidebar when VS Code starts. VS Code otherwise restores the last active view, so new windows and folders open on Explorer."
+          },
+          "omp.closeLaunchedWindow": {
+            "type": "boolean",
+            "default": true,
+            "description": "Close a VS Code window that was opened for a launch request (such as a session started on the phone through omp-remote) when its last omp session ends. Other windows are never closed."
           }
         }
       },
@@ -467,9 +472,12 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "tsc -p tsconfig.test.json && node --test --require ./out-test/test/setup.js \"out-test/test/*.test.js\"",
+    "build:hook": "bun build hook/vscode-session-restore.ts --target bun --format esm --external \"@oh-my-pi/*\" --outfile out/hook/vscode-session-restore.js",
+    "vscode:prepublish": "npm run build:hook",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
+    "@mystravil/omp-session-core": "0.1.2",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.2.0",

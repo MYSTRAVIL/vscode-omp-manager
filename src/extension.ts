@@ -1,6 +1,9 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { normPath } from "./config";
+import { FocusRequestHandler } from "./focusRequests";
+import { LaunchRequestHandler } from "./launchRequests";
+import { leaseHeld } from "./lease";
 import { SessionIndex, type SessionInfo } from "./sessions";
 import { systemNotify } from "./systemNotify";
 import { type StateChange, TerminalTracker } from "./tracker";
@@ -19,9 +22,10 @@ function sessionFileOf(arg: SessionContext | undefined): string | undefined {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+	const activatedAt = Date.now();
 	const index = new SessionIndex();
 	const usage = new UsageService();
-	const tracker = new TerminalTracker(context, context.asAbsolutePath("hook/vscode-session-restore.ts"));
+	const tracker = new TerminalTracker(context, context.asAbsolutePath("out/hook/vscode-session-restore.js"), index);
 
 	const newSession = async () => {
 		const config = vscode.workspace.getConfiguration("omp");
@@ -151,7 +155,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 				void vscode.window.showWarningMessage("Close this session's terminal before deleting it.");
 				return;
 			}
-			const title = index.find(file)?.title ?? file;
+			const info = index.find(file);
+			if (info && (await leaseHeld([info.id]))) {
+				void vscode.window.showWarningMessage("An omp in another window or terminal is running this session. Close it before deleting the session.");
+				return;
+			}
+			const title = info?.title ?? file;
 			const ok = await vscode.window.showWarningMessage(
 				`Delete "${title}"?`,
 				{ modal: true, detail: "The session file and its subagent transcripts move to the trash." },
@@ -171,6 +180,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	);
 
 	await tracker.start();
+
+	// Remote windows (SSH, WSL, containers) neither announce a handler nor take launch or focus requests.
+	if (vscode.env.remoteName === undefined) {
+		// Focus requests first: the handler file that announces them is written by the launch handler.
+		const focusRequests = new FocusRequestHandler(tracker);
+		context.subscriptions.push(focusRequests);
+		focusRequests.start();
+		const launchRequests = new LaunchRequestHandler(tracker, context.extension, activatedAt);
+		context.subscriptions.push(launchRequests);
+		await launchRequests.start();
+	}
 
 	if (vscode.workspace.getConfiguration("omp").get<boolean>("focusOnStartup", true)) {
 		void vscode.commands.executeCommand("workbench.view.extension.omp");

@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as vscode from "vscode";
 import { normPath, ompExecutable, terminalMapDir } from "./config";
+import { leaseHeld } from "./lease";
+import type { SessionIndex } from "./sessions";
 
 /** Env var the omp-side hook reads to tie a session to the terminal that runs it. */
 export const TERMINAL_ENV = "OMP_VSCODE_TERMINAL";
@@ -31,6 +33,7 @@ interface MapRecord {
 	pid?: number;
 	ppid?: number;
 	sessionFile?: string;
+	sessionId?: string;
 	cwd?: string;
 	state?: string;
 	updatedAt?: number;
@@ -46,6 +49,9 @@ interface Tracked {
 	terminal: vscode.Terminal;
 	cwd: string;
 	sessionFile?: string;
+	/** The session id and omp process id the hook last reported for this terminal. */
+	sessionId?: string;
+	pid?: number;
 	state?: SessionState;
 	/** The hook has written a record for this terminal. */
 	reported: boolean;
@@ -79,6 +85,10 @@ export interface LaunchOptions {
 	preserveFocus?: boolean;
 	/** Overrides the `omp.terminalLocation` setting. */
 	location?: "editor" | "panel";
+	/** omp arguments in place of `omp.extraArgs`, for a launch request. */
+	args?: readonly string[];
+	/** Environment added over `omp.env`. */
+	env?: Readonly<Record<string, string>>;
 }
 
 function fileExists(file: string): boolean {
@@ -117,7 +127,7 @@ export class TerminalTracker implements vscode.Disposable {
 	private readonly disposables: vscode.Disposable[] = [];
 	private watcher: fs.FSWatcher | undefined;
 	/** Launch timings, for diagnosing slow session starts. */
-	private readonly log = vscode.window.createOutputChannel("OMP", { log: true });
+	readonly log = vscode.window.createOutputChannel("OMP", { log: true });
 	private restoring = false;
 	private warnedUnreported = false;
 	/**
@@ -125,15 +135,26 @@ export class TerminalTracker implements vscode.Disposable {
 	 * the saved list, so neither a pending nor a dismissed prompt forgets them.
 	 */
 	private pendingRestore: SavedSession[] = [];
+	/** Session files (normalized) whose lease check is in flight, so a double click launches once. */
+	private readonly checking = new Set<string>();
 	private readonly changed = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.changed.event;
 	private readonly stateChanged = new vscode.EventEmitter<StateChange>();
 	readonly onDidChangeState = this.stateChanged.event;
+	private readonly closedLast = new vscode.EventEmitter<void>();
+	/** Fires when closing a terminal leaves this window with no omp terminal. A VS Code shutdown does not fire it. */
+	readonly onDidCloseLast = this.closedLast.event;
 
-	/** `hookPath`: the bundled omp extension that reports each terminal's session. */
+	/**
+	 * `hookPath`: the bundled omp extension that reports each terminal's session. `index`
+	 * links a session to the copies its conversation went on in. `isLeased` asks whether
+	 * another omp process holds any of the given session ids.
+	 */
 	constructor(
 		private readonly ctx: vscode.ExtensionContext,
 		private readonly hookPath: string,
+		private readonly index: SessionIndex,
+		private readonly isLeased: (ids: readonly string[]) => Promise<boolean> = leaseHeld,
 	) {}
 
 	async start(): Promise<void> {
@@ -181,14 +202,19 @@ export class TerminalTracker implements vscode.Disposable {
 		return out;
 	}
 
+	/** The open omp terminal that runs session `sessionId` or the omp process `pid`, as the hook reported them. */
+	terminalOf(sessionId: string, pid: number): vscode.Terminal | undefined {
+		return this.tracked.find((t) => t.sessionId === sessionId || t.pid === pid)?.terminal;
+	}
+
 	/**
-	 * Focuses the terminal already running `sessionFile`, or resumes it in a new one.
-	 * With `location`, an open terminal also moves there.
+	 * Focuses the terminal already running `sessionFile`, or resumes it in a new one, asking
+	 * first when another omp process holds it. With `location`, an open terminal also moves there.
 	 */
 	async open(opts: LaunchOptions): Promise<void> {
-		const existing = opts.sessionFile ? this.openSessions().get(normPath(opts.sessionFile)) : undefined;
+		const existing = opts.sessionFile ? this.running(opts.sessionFile) : undefined;
 		if (!existing) {
-			this.launch(opts);
+			if (!opts.sessionFile || (await this.confirmResume(opts.sessionFile))) this.launch(opts);
 			return;
 		}
 		existing.terminal.show(opts.preserveFocus);
@@ -197,25 +223,68 @@ export class TerminalTracker implements vscode.Disposable {
 		else if (opts.location === "editor") await vscode.commands.executeCommand("workbench.action.terminal.moveToEditor");
 	}
 
+	/**
+	 * Whether to resume `sessionFile`. omp forks a session another omp process holds into a new
+	 * file, so that takes the user's consent. The check covers the copies its conversation went on
+	 * in, since `--resume` opens the newest. A failed check resumes without asking.
+	 */
+	private async confirmResume(sessionFile: string): Promise<boolean> {
+		const info = this.index.find(sessionFile);
+		if (!info) return true;
+		const key = normPath(sessionFile);
+		if (this.checking.has(key)) return false;
+		this.checking.add(key);
+		try {
+			const ids = [info.id, ...this.index.continuations(sessionFile).map((c) => c.id)];
+			if (!(await this.isLeased(ids))) return true;
+			const fork = "Open a fork";
+			const answer = await vscode.window.showWarningMessage(
+				"This session is open in another omp process.",
+				{ modal: true, detail: "Opening it here makes omp fork the conversation into a new session file." },
+				fork,
+			);
+			return answer === fork;
+		} finally {
+			this.checking.delete(key);
+		}
+	}
+
+	/**
+	 * The terminal running `sessionFile` or a copy its conversation went on in. omp 18.13.2+
+	 * resumes the newest such copy instead of the file given, so launching another omp for an
+	 * old copy whose continuation runs here would start a second process on that conversation.
+	 */
+	private running(sessionFile: string): OpenSession | undefined {
+		const open = this.openSessions();
+		const direct = open.get(normPath(sessionFile));
+		if (direct) return direct;
+		for (const copy of this.index.continuations(sessionFile)) {
+			const found = open.get(normPath(copy.file));
+			if (found) return found;
+		}
+		return undefined;
+	}
+
 	/** `continueTurn`: open with `--restore`, which also goes on with a turn and subagents the last omp left unfinished. */
-	private launch(opts: LaunchOptions, continueTurn = false): vscode.Terminal {
+	launch(opts: LaunchOptions, continueTurn = false): vscode.Terminal {
 		const launchedAt = Date.now();
 		const cfg = vscode.workspace.getConfiguration("omp");
 		const key = crypto.randomUUID();
 		const location = opts.location ?? cfg.get<string>("terminalLocation");
 		const inPanel = location === "panel";
 
-		// Apply extraArgs after the hook, before --resume or --restore
+		// Apply extraArgs after the hook, before --resume or --restore. A launch request brings
+		// its own arguments instead: a --model in extraArgs would override the one it asked for.
 		const args = ["-e", this.hookPath];
-		const extraArgs = cfg.get<unknown[]>("extraArgs", []);
+		const extraArgs = opts.args ?? cfg.get<unknown[]>("extraArgs", []);
 		for (const a of extraArgs) if (typeof a === "string") args.push(a);
 		const reopen = continueTurn ? "--restore" : "--resume";
 		if (opts.sessionFile) args.push(reopen, opts.sessionFile);
 
-		// Merge custom env, but let OMP_VSCODE_TERMINAL always win
+		// Merge custom env, then the request's env, but let OMP_VSCODE_TERMINAL always win
 		const env: Record<string, string> = { [TERMINAL_ENV]: key };
 		const customEnv = cfg.get<Record<string, unknown>>("env", {});
-		for (const [k, v] of Object.entries(customEnv)) {
+		for (const [k, v] of [...Object.entries(customEnv), ...Object.entries(opts.env ?? {})]) {
 			if (typeof v === "string" && k !== TERMINAL_ENV) env[k] = v;
 		}
 
@@ -242,7 +311,8 @@ export class TerminalTracker implements vscode.Disposable {
 		if (inPanel) terminal.show(opts.preserveFocus);
 		const entry = this.track(terminal, key, opts.cwd ?? "", opts.sessionFile);
 		entry.launchedAt = launchedAt;
-		this.log.info(`[${key.slice(0, 8)}] ${opts.sessionFile ? `${reopen.slice(2)} ${opts.sessionFile}` : "new session"} in ${inPanel ? "panel" : "editor"}; terminal created ${this.since(entry)}`);
+		const what = opts.sessionFile ? `${reopen.slice(2)} ${opts.sessionFile}` : opts.args ? "launch request" : "new session";
+		this.log.info(`[${key.slice(0, 8)}] ${what} in ${inPanel ? "panel" : "editor"}; terminal created ${this.since(entry)}`);
 		void terminal.processId.then((pid) => this.log.info(`[${key.slice(0, 8)}] process ${pid ?? "(none)"} started ${this.since(entry)}`));
 		this.watchForReport(entry);
 		this.save();
@@ -356,6 +426,8 @@ export class TerminalTracker implements vscode.Disposable {
 		if (!entry.reported && entry.launchedAt !== undefined) this.log.info(`[${key.slice(0, 8)}] omp reported (${rec.state ?? "idle"}) ${this.since(entry)}`);
 		entry.reported = true;
 		entry.stalled = false;
+		entry.sessionId = typeof rec.sessionId === "string" && rec.sessionId ? rec.sessionId : undefined;
+		entry.pid = typeof rec.pid === "number" ? rec.pid : undefined;
 		const cwd = typeof rec.cwd === "string" ? rec.cwd : entry.cwd;
 		// Hooks older than state reporting write no state; treat those sessions as idle.
 		const state = (rec.state && STATES.includes(rec.state) ? rec.state : "idle") as SessionState;
@@ -393,6 +465,7 @@ export class TerminalTracker implements vscode.Disposable {
 			setTimeout(() => {
 				this.pendingClose.delete(terminal);
 				this.untrack(entry);
+				if (!this.tracked.length) this.closedLast.fire();
 			}, CLOSE_GRACE_MS),
 		);
 	}
@@ -424,6 +497,7 @@ export class TerminalTracker implements vscode.Disposable {
 		for (const d of this.disposables) d.dispose();
 		this.changed.dispose();
 		this.stateChanged.dispose();
+		this.closedLast.dispose();
 		this.log.dispose();
 	}
 }
